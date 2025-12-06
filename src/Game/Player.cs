@@ -31,8 +31,7 @@ namespace BarcodeRevealTool.Game
             var tag = BattleTagPattern.Match(BattleTag).Groups["nick"]?.Value;
 
             return new string(
-                @$"[NICK : {nick ?? UNKNOWN}" +
-                $"TAG:{tag ?? UNKNOWN}]"
+                @$"[NICK : {nick ?? UNKNOWN} TAG:{tag ?? UNKNOWN}]"
             );
         }
 

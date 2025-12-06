@@ -24,7 +24,7 @@
 
                 if (_p1 is null)
                 {
-                    var firstNick = new String([.. p1.Slice(0, 20).ToArray().Select(x => (char)x)]);
+                    string firstNick = new([.. p1[..20].ToArray().Select(x => (char)x)]);
                     _p1 = new Player(p1);
                 }
 
@@ -40,7 +40,7 @@
 
                 if (_p2 is null)
                 {
-                    var firstNick = new String([.. p2.Slice(0, 20).ToArray().Select(x => (char)x)]);
+                    string firstNick = new([.. p2[..20].ToArray().Select(x => (char)x)]);
                     _p2 = new Player(p2);
                 }
 
