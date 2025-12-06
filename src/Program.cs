@@ -1,4 +1,5 @@
 ﻿using BarcodeRevealTool.Game;
+using Flurl.Http;
 
 namespace BarcodeRevealTool
 {
@@ -11,7 +12,7 @@ namespace BarcodeRevealTool
             while (true)
             {
                 var lobbyFilePath = Path.Combine(dir, "Temp", "Starcraft II", "TempWriteReplayP1", "replay.server.battlelobby");
-                //C:\Users\pawel\AppData\Local\Temp\StarCraft II\TempWriteReplayP1
+
                 if (File.Exists(lobbyFilePath))
                 {
                     var lobbyBytes = File.ReadAllBytes(lobbyFilePath);
@@ -20,6 +21,11 @@ namespace BarcodeRevealTool
                     Console.Clear();
                     Console.WriteLine(lobby.P1);
                     Console.WriteLine(lobby.P2);
+
+
+                    //todo : fix obtaining data from external servicd
+
+                    var profile = await "https://sc2pulse.nephest.com/sc2/api/characters?query=Originator%2321343".GetJsonAsync<dynamic>();
                     await Task.Delay(1000);
                 }
                 else

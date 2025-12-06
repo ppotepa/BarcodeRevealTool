@@ -1,4 +1,6 @@
-﻿namespace BarcodeRevealTool.Game
+﻿using System.Text.RegularExpressions;
+
+namespace BarcodeRevealTool.Game
 {
 
     /// <summary>
@@ -8,49 +10,31 @@
     internal class GameLobby
     {
         private readonly byte[]? bytes;
-
-        private const int PLAYER_TWO_STARTING_INDEX = 0x8D;
-        private const int PLAYER_CHUNK_LENGTH = 0x8D;
+        private readonly MatchCollection players;
+        public Regex Pattern = new Regex("(?<name>[A-Za-z][A-Za-z0-9]{2,20}#[0-9]{3,6})");
 
         private Player? _p2;
         private Player? _p1;
 
-        public Player P1
-        {
-            get
-            {
-
-                Span<byte> p1 = new Span<byte>(bytes).Slice(0x00006E0E, PLAYER_CHUNK_LENGTH);
-
-                if (_p1 is null)
-                {
-                    string firstNick = new([.. p1[..20].ToArray().Select(x => (char)x)]);
-                    _p1 = new Player(p1);
-                }
-
-                return _p1;
-            }
-        }
-
-        public Player P2
-        {
-            get
-            {
-                Span<byte> p2 = new Span<byte>(bytes).Slice(0x00006E0E + PLAYER_TWO_STARTING_INDEX, PLAYER_CHUNK_LENGTH);
-
-                if (_p2 is null)
-                {
-                    string firstNick = new([.. p2[..20].ToArray().Select(x => (char)x)]);
-                    _p2 = new Player(p2);
-                }
-
-                return _p2;
-            }
-        }
-
         public GameLobby(byte[] bytes)
         {
+
             this.bytes = bytes;
+            this.players = Pattern.Matches(new string(bytes.Select(x => (char)x).ToArray()));
+
+            if (players.Count % 2 == 0)
+            {
+                if (players.Count / 3 is 2)
+                {
+
+                    this.P1 = new Player(this.players[0].Groups["name"].Value, this.players[2].Groups["name"].Value);
+                    this.P2 = new Player(this.players[3].Groups["name"].Value, this.players[5].Groups["name"].Value);
+                }
+            }
+
         }
+
+        public Player P1 { get; }
+        public Player P2 { get; }
     }
 }
