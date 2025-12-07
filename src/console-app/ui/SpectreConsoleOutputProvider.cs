@@ -85,14 +85,11 @@ namespace BarcodeRevealTool.UI.Console
             AnsiConsole.MarkupLine("[bold cyan]═══ LOBBY INFORMATION ═══[/]");
             AnsiConsole.WriteLine();
 
-            // Players section - safely cast to concrete types
-            if (lobby is BarcodeRevealTool.game.lobbies.ISoloGameLobby concreteLobbby)
-            {
-                RenderTeamInfo("Team 1", concreteLobbby.Team1 as Team);
-                AnsiConsole.WriteLine();
-                RenderTeamInfo("Team 2", concreteLobbby.Team2 as Team);
-                AnsiConsole.WriteLine();
-            }
+            // Players section - safely cast object properties to Team type
+            RenderTeamInfo("Team 1", lobby.Team1 as Team);
+            AnsiConsole.WriteLine();
+            RenderTeamInfo("Team 2", lobby.Team2 as Team);
+            AnsiConsole.WriteLine();
 
             // Opponent stats
             RenderOpponentStats(additionalData as LadderDistinctCharacter);
