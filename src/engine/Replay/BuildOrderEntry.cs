@@ -1,4 +1,4 @@
-﻿// Example: simple SC2 build-order extractor in .NET 8 using s2protocol.NET
+// Example: simple SC2 build-order extractor in .NET 8 using s2protocol.NET
 // ------------------------------------------
 // 1. Create a new project:
 //      dotnet new console -n Sc2BuildOrder

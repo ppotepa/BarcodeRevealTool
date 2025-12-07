@@ -1,4 +1,4 @@
-﻿namespace BarcodeRevealTool.Game
+namespace BarcodeRevealTool.Game
 {
     public record Player()
     {

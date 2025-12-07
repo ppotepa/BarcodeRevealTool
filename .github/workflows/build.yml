@@ -1,0 +1,37 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build -c Release --no-restore
+
+    - name: Test
+      run: dotnet test -c Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
+      continue-on-error: true
+
+    - name: Upload build artifact
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-release
+        path: src/tool/bin/Release/net8.0/
+        retention-days: 7

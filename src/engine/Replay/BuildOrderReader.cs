@@ -1,4 +1,4 @@
-﻿// Example: simple SC2 build-order extractor in .NET 8 using s2protocol.NET
+// Example: simple SC2 build-order extractor in .NET 8 using s2protocol.NET
 // ------------------------------------------
 // 1. Create a new project:
 //      dotnet new console -n Sc2BuildOrder
@@ -117,7 +117,7 @@ namespace BarcodeRevealTool.Replay
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"  ✗ Error reading {Path.GetFileName(replayFilePath)}: {ex.Message}");
+                // Console.WriteLine($"  ✗ Error reading {Path.GetFileName(replayFilePath)}: {ex.Message}");
                 return null;
             }
         }
@@ -129,7 +129,7 @@ namespace BarcodeRevealTool.Replay
         {
             _database = new ReplayDatabase(customCachePath);
             var (total, withBuildOrder) = _database.GetDatabaseStats();
-            Console.WriteLine($"Database initialized: {total} replays ({withBuildOrder} with build order)");
+            // Console.WriteLine($"Database initialized: {total} replays ({withBuildOrder} with build order)");
         }
 
         /// <summary>
@@ -190,7 +190,7 @@ namespace BarcodeRevealTool.Replay
             // NOTE:
             // Property names below (Gameloop, UnitTypeName, ControlPlayerId, etc.)
             // follow the usual s2protocol naming. If anything doesn’t compile,
-            // just inspect one event with Console.WriteLine() / debugger and
+            // just inspect one event with // Console.WriteLine() / debugger and
             // tweak the property names accordingly.
 
             // 1) Units/buildings – SUnitInit/SUnitBorn (tracker events)
@@ -292,11 +292,11 @@ namespace BarcodeRevealTool.Replay
                 if (metadata is not null && FindPlayerInMetadata(metadata, playerBattleTag) is not null)
                 {
                     validReplays.Add((replayFile, metadata.LastModified));
-                    Console.WriteLine($"  ✓ {Path.GetFileName(replayFile)}");
+                    // Console.WriteLine($"  ✓ {Path.GetFileName(replayFile)}");
                 }
             }
 
-            Console.WriteLine($"Filtered to {validReplays.Count} replay(s) with player {playerBattleTag}.");
+            // Console.WriteLine($"Filtered to {validReplays.Count} replay(s) with player {playerBattleTag}.");
 
             // Return the most recent replay
             return validReplays
@@ -344,7 +344,7 @@ namespace BarcodeRevealTool.Replay
             Sc2Replay? replay = await decoder.DecodeAsync(replayFilePath, options, cts.Token);
             if (replay == null)
             {
-                Console.WriteLine("Failed to decode replay.");
+                // Console.WriteLine("Failed to decode replay.");
                 throw new InvalidOperationException("Failed to decode replay.");
             }
 
@@ -364,15 +364,15 @@ namespace BarcodeRevealTool.Replay
                 string playerName = playerMeta?.Name ?? $"Player {playerGroup.Key}";
                 string race = playerMeta?.Race ?? "Unknown";
 
-                Console.WriteLine($"=== Build order for {playerName} ({race}) ===");
+                // Console.WriteLine($"=== Build order for {playerName} ({race}) ===");
 
                 foreach (var entry in playerGroup.OrderBy(e => e.TimeSeconds))
                 {
                     var t = TimeSpan.FromSeconds(entry.TimeSeconds);
-                    Console.WriteLine($"{t:mm\\:ss}  {entry.Kind,-8}  {entry.Name}");
+                    // Console.WriteLine($"{t:mm\\:ss}  {entry.Kind,-8}  {entry.Name}");
                 }
 
-                Console.WriteLine();
+                // Console.WriteLine();
             }
 
             return new BuildOrder
@@ -422,7 +422,7 @@ namespace BarcodeRevealTool.Replay
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error storing replay in database: {ex.Message}");
+                // Console.WriteLine($"Error storing replay in database: {ex.Message}");
             }
         }
     }

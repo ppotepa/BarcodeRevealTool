@@ -5,43 +5,30 @@
 
 A real-time StarCraft II game analyzer that reveals opponent information during gameplay by analyzing lobby data and build orders.
 
-## Overview
+## Features
 
-Monitors SC2 games and displays opponent info in real-time:
+- Real-time opponent detection and build order extraction
+- Persistent SQLite replay database with automatic sync
+- Works offline—captures replays even when tool isn't running
+- State-based UI (minimal screen updates during gameplay)
 
-- Opponent battle tag identification
-- Build order extraction from replays
-- Persistent SQLite replay database
-- Works offline - captures replays even when tool isn't running
-
-## Current Features (v0.1-alpha)
-
-✅ Real-time game state detection  
-✅ Opponent battle tag display  
-✅ Build order extraction from replays  
-✅ SQLite replay database with metadata caching  
-✅ Automatic replay discovery and sync  
-✅ Efficient state-based screen updates
-
-## Getting Started
+## Setup
 
 ### Prerequisites
-
 - **.NET 8.0** or later
 - **StarCraft II** installed
-- Replay files in your SC2 Accounts directory
 
-### Installation
+### Install & Run
 
 ```bash
 git clone https://github.com/ppotepa/BarcodeRevealTool.git
 cd BarcodeRevealTool
 dotnet build -c Release
+cd src/tool/bin/Release/net8.0
+./BarcodeRevealTool.exe
 ```
 
-### Configuration
-
-Edit `src/tool/appsettings.json`:
+Edit `src/tool/appsettings.json` first:
 
 ```json
 {
@@ -56,108 +43,50 @@ Edit `src/tool/appsettings.json`:
 }
 ```
 
-### Running
+On first run: scans and caches all replays (~1 minute per 500 replays). Subsequent starts sync new replays only.
 
-```bash
-cd src/tool/bin/Release/net8.0
-./BarcodeRevealTool.exe
-```
+## Code
 
-Start a SC2 game - opponent info displays automatically.
+**Architecture:**
+- **BarcodeRevealTool.Engine** - Core game engine logic, UI-agnostic
+  - `GameEngine.cs` - Game state machine and replay sync
+  - `Abstractions/` - IOutputProvider, IReplayService, IGameLobbyFactory interfaces
+  
+- **BarcodeRevealTool.ConsoleApp** - Minimal console application with Spectre.Console UI
+  - `UI/SpectreConsoleOutputProvider.cs` - Colorful console output implementation
+  - `Adapters/GameLobbyFactoryAdapter.cs` - Wraps GameLobbyFactory for engine
+  - `Services/ReplayService.cs` - Replay cache/sync operations
+  - `Program.cs` - Dependency injection setup
 
-### First Run
+**Supporting Classes:**
+- **GameLobbyFactory.cs** - Parse lobby file  
+- **BuildOrderReader.cs** - Extract builds from replays  
+- **ReplayDatabase.cs** - SQLite storage and queries
 
-Scans and caches all replays (~1 minute per 500 replays). Creates `cache.lock` file. Subsequent startups sync new replays only.
+Database: Single `replays.db` with insert-only policy. Stores players, map, date, SC2 version, and build orders.
 
-## Architecture
+## Roadmap
 
-**RevealTool.cs** - State machine, cache init, replay sync  
-**GameLobbyFactory.cs** - Parse lobby file, enrich with SC2 Pulse API  
-**BuildOrderReader.cs** - Extract build order from replays  
-**ReplayDatabase.cs** - SQLite persistence, queries  
-
-Database: Single `replays.db` with Players, Map, Date, SC2 Version, Build Orders. Insert-only policy.
-
-## Future Roadmap
-
-### Phase 2 (v0.2-beta)
-- [ ] **Build order history** - Search and filter opponent's last N builds by map/matchup
-- [ ] **Player statistics** - Win rate vs this specific opponent
-- [ ] **APM baselines** - Compare opponent's typical APM patterns across replays
-- [ ] **Build confidence matching** - Estimate current opponent's likely build based on early game patterns
-
-### Phase 3 (v0.3-release)
-- [ ] **Local REST API** - Expose game data via HTTP for streamer overlays
-- [ ] **Web dashboard** - View replay database and statistics
-- [ ] **Advanced filtering** - Search by map, race matchup, time period, opponent skill level
-- [ ] **Replay annotations** - Mark notable games and decisions
-
-### Phase 4 (v1.0-stable) - Feature Complete
-- [ ] **GUI application** - Dedicated windows UI replacing console
-- [ ] **Streamer integration** - Native overlay support for OBS/Streamlabs
-- [ ] **Multiple build order display** - Show last 5 opponent builds in-game
-- [ ] **Real-time in-game stats** - Display opponent race, APM, recent matchup data while game is running
-- [ ] **Build matching confidence scores** - Estimate opponent's build with % confidence based on early game
-- [ ] **Tournament mode** - Anonymized statistics and VOD organization
-
-### Phase 5 (v1.1+) - Optional Enhancements
-- [ ] **Machine learning integration** (optional) - Predictive build classification if beneficial
-- [ ] **Control group "barcode" analysis** - Advanced pattern recognition of opponent's unit control structure
-- [ ] **Deep replay analysis** - Unit production patterns, spending efficiency, army composition timing
-- [ ] **Community replay sharing** and collaborative analysis
-- [ ] **Tournament statistics** and meta trends
-
-> **Note:** v1.1+ features are aspirational. The tool may provide sufficient value without ML integration. These will be added only if they provide measurable improvements over pattern-based matching.
-
-## Development
+**v0.2** - Build order history, win rate vs opponent, APM baselines  
+**v0.3** - Local REST API for streamer overlays  
+**v1.0** - GUI application with native overlay support  
+**v1.1+** - Optional ML and advanced pattern recognition (only if it adds value)
 
 ## Tech Stack
 
-- **.NET 8.0** framework
-- **SQLite** database (System.Data.SQLite)
-- **s2protocol.NET** - Replay file parsing
-- **Sc2Pulse** - SC2 player API
+- .NET 8.0
+- SQLite (System.Data.SQLite)
+- s2protocol.NET (replay parsing)
+- Sc2Pulse API (player data)
 
-## Building
-
-```bash
-dotnet build              # Debug
-dotnet build -c Release   # Release
-```
-
-## Configuration
-
-`appsettings.json` settings:
-
-| Setting | Purpose |
-|---------|---------|
-| `user.battleTag` | Your SC2 battle tag |
-| `replays.folder` | SC2 replay directory path |
-| `replays.recursive` | Search subdirectories |
-| `refreshInterval` | UI update interval (ms) |
-
-## Data Storage
-
-All data stored in `_db/` subfolder relative to executable:
-- `replays.db` - Main replay database
-- `cache.lock` - Lock file (prevents re-scanning on startup)
-
-## Known Limitations (v0.1-alpha)
+## Limitations
 
 - 1v1 only
 - Console UI (no GUI yet)
 - Map name from file metadata only
 
-## Performance
-
-- **First startup:** ~1 minute per 500 replays
-- **Subsequent startups:** <1 second (sync only)
-- **In-game:** Minimal impact, state-based updates only
-- **Database queries:** Indexed for fast lookups
-
 ## Contributing
 
-This is an early alpha project. Contributions welcome for:
 - Replay parsing improvements
 - Database optimization
 - UI/overlay integration
@@ -169,17 +98,7 @@ This is an early alpha project. Contributions welcome for:
 
 ## Disclaimer
 
-This tool is a proof of concept for educational purposes. StarCraft II is a Blizzard Entertainment product. This tool is not affiliated with or endorsed by Blizzard Entertainment.
-
-## Roadmap Rationale
-
-**v0.1 (current):** Core functionality and database reliability  
-**v0.2:** Build order search/history and player-specific statistics (APM, win rate vs opponent)  
-**v0.3:** Streamer API and advanced filtering  
-**v1.0:** Full GUI, native overlay support, in-game real-time stats  
-**v1.1+:** Optional ML and pattern recognition (only if it adds value beyond deterministic matching)
-
-The progression prioritizes practical, immediately useful features: knowing your opponent's build history and your historical matchup record is actionable from day one. Advanced features like ML will only be added if they demonstrably improve recommendations beyond simple pattern matching.
+Educational proof of concept. StarCraft II is a Blizzard Entertainment product. Not affiliated with or endorsed by Blizzard.
 
 ---
 

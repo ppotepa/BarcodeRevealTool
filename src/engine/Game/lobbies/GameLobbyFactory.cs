@@ -1,4 +1,4 @@
-﻿using BarcodeRevealTool.game.lobbies;
+using BarcodeRevealTool.game.lobbies;
 using BarcodeRevealTool.Replay;
 using System.Text.RegularExpressions;
 
@@ -8,7 +8,7 @@ namespace BarcodeRevealTool.Game
     /// as of now we wanna just support 1v1 mode, prolly the structure is a bit different for team games, also arcase,
     /// would need dig deeper into the lobby file structure
     /// </summary>
-    internal class GameLobbyFactory
+    public class GameLobbyFactory
     {
         private static readonly Regex PlayerNamePattern = new("(?<name>[A-Za-z][A-Za-z0-9]{2,20}#[0-9]{3,6})");
 
@@ -75,7 +75,7 @@ namespace BarcodeRevealTool.Game
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to populate last build order: {ex.Message}");
+                // Console.WriteLine($"Failed to populate last build order: {ex.Message}");
             }
         }
 

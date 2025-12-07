@@ -147,7 +147,7 @@ namespace BarcodeRevealTool.Replay
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error adding/updating replay: {ex.Message}");
+                // Console.WriteLine($"Error adding/updating replay: {ex.Message}");
                 return 0;
             }
         }
@@ -199,11 +199,11 @@ namespace BarcodeRevealTool.Replay
                 updateCommand.Parameters.AddWithValue("@CachedAt", DateTime.UtcNow.ToString("O"));
                 updateCommand.ExecuteNonQuery();
 
-                Console.WriteLine($"  ✓ Stored build order for replay ID {replayId}");
+                // Console.WriteLine($"  ✓ Stored build order for replay ID {replayId}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error storing build order entries: {ex.Message}");
+                // Console.WriteLine($"Error storing build order entries: {ex.Message}");
             }
         }
 
@@ -247,7 +247,7 @@ namespace BarcodeRevealTool.Replay
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error retrieving replay: {ex.Message}");
+                // Console.WriteLine($"Error retrieving replay: {ex.Message}");
                 return null;
             }
         }
@@ -286,7 +286,7 @@ namespace BarcodeRevealTool.Replay
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error retrieving build order entries: {ex.Message}");
+                // Console.WriteLine($"Error retrieving build order entries: {ex.Message}");
             }
 
             return entries;
@@ -333,7 +333,7 @@ namespace BarcodeRevealTool.Replay
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error retrieving replays with player: {ex.Message}");
+                // Console.WriteLine($"Error retrieving replays with player: {ex.Message}");
             }
 
             return replays;
@@ -405,7 +405,7 @@ namespace BarcodeRevealTool.Replay
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error caching metadata: {ex.Message}");
+                // Console.WriteLine($"Error caching metadata: {ex.Message}");
             }
         }
 

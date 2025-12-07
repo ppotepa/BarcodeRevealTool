@@ -1,4 +1,4 @@
-﻿namespace BarcodeRevealTool.replay
+namespace BarcodeRevealTool.replay
 {
     public class BuildOrder
     {

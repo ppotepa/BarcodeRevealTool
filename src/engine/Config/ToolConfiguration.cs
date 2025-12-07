@@ -1,4 +1,4 @@
-﻿public class AppSettings
+public class AppSettings
 {
     public UserSettings User { get; set; } = new();
     public ReplaysSettings Replays { get; set; } = new();
