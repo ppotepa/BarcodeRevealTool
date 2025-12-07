@@ -3,9 +3,11 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36616.10
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BarcodeRevealTool", "src\BarcodeRevealTool.csproj", "{EF005333-78B6-33E0-DDB3-8A8EB8C522B5}"
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BarcodeRevealTool", "src\tool\BarcodeRevealTool.csproj", "{5C0C2249-AFBB-AEF3-7A4A-10F3A287846B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sc2PulseClient", "src\sc2pulse\Sc2PulseClient.csproj", "{6B1020AE-38B3-AC8C-3925-38CF0D15AD16}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -13,16 +15,21 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{EF005333-78B6-33E0-DDB3-8A8EB8C522B5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{EF005333-78B6-33E0-DDB3-8A8EB8C522B5}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{EF005333-78B6-33E0-DDB3-8A8EB8C522B5}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{EF005333-78B6-33E0-DDB3-8A8EB8C522B5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5C0C2249-AFBB-AEF3-7A4A-10F3A287846B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5C0C2249-AFBB-AEF3-7A4A-10F3A287846B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5C0C2249-AFBB-AEF3-7A4A-10F3A287846B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5C0C2249-AFBB-AEF3-7A4A-10F3A287846B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6B1020AE-38B3-AC8C-3925-38CF0D15AD16}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6B1020AE-38B3-AC8C-3925-38CF0D15AD16}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6B1020AE-38B3-AC8C-3925-38CF0D15AD16}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6B1020AE-38B3-AC8C-3925-38CF0D15AD16}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
-		{EF005333-78B6-33E0-DDB3-8A8EB8C522B5} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{5C0C2249-AFBB-AEF3-7A4A-10F3A287846B} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{6B1020AE-38B3-AC8C-3925-38CF0D15AD16} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {FE376090-ED85-46B4-A499-FB60F95548DD}
