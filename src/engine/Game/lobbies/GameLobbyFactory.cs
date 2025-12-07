@@ -40,10 +40,10 @@ namespace BarcodeRevealTool.Game
                     UsersTeam = usersTeamSelector
                 };
 
-                // Fetch last build order entry asynchronously
-                var a = PopulateLastBuildOrderAsync(lobby, configuration);
+                // Fetch last build order entry asynchronously in background (fire-and-forget)
+                _ = PopulateLastBuildOrderAsync(lobby, configuration);
 
-                // AdditionalData will be lazily initialized in PrintLobbyInfo if needed
+                // AdditionalData will be lazily initialized when needed
                 return lobby;
             }
             catch (Exception ex)
@@ -66,6 +66,8 @@ namespace BarcodeRevealTool.Game
 
                 var oppositePlayer = oppositeTeamPlayers.First();
 
+                // Add timeout to prevent blocking if folder scan is slow
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 var buildOrder = await BuildOrderReader.Read(
                     configuration.Replays.Folder,
                     oppositePlayer.Tag,
@@ -80,9 +82,13 @@ namespace BarcodeRevealTool.Game
 
                 lobby.LastBuildOrderEntry = lastEntry;
             }
-            catch (Exception ex)
+            catch (OperationCanceledException)
             {
-                // Console.WriteLine($"Failed to populate last build order: {ex.Message}");
+                // Build order lookup timed out, continue without it
+            }
+            catch (Exception)
+            {
+                // Other errors, continue without build order
             }
         }
 

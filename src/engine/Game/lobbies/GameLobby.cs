@@ -20,6 +20,7 @@ namespace BarcodeRevealTool.Game
         public LadderDistinctCharacter? AdditionalData { get; private set; }
         public BuildOrderEntry? LastBuildOrderEntry { get; set; }
 
+
         public async Task EnsureAdditionalDataLoadedAsync()
         {
             if (AdditionalData != null)
@@ -30,8 +31,11 @@ namespace BarcodeRevealTool.Game
                 var opponentTag = OppositeTeam?.Invoke(this)?.Players.FirstOrDefault()?.Tag;
                 if (!string.IsNullOrEmpty(opponentTag))
                 {
+                    // Use timeout to prevent indefinite waits on slow/offline API
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                     var result = await Client.FindCharactersAsync(
-                        new Sc2Pulse.Queries.CharacterFindQuery() { Query = opponentTag });
+                        new Sc2Pulse.Queries.CharacterFindQuery() { Query = opponentTag }, 
+                        cts.Token);
 
                     if (result.Any())
                     {
@@ -41,8 +45,10 @@ namespace BarcodeRevealTool.Game
             }
             catch
             {
-                // If loading fails, AdditionalData stays null
+                // If loading fails (timeout, network error, etc.), AdditionalData stays null
+                // UI will show "MMR data unavailable" but won't block user
             }
         }
     }
 }
+
