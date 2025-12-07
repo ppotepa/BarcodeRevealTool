@@ -1,20 +1,19 @@
-﻿
-using Newtonsoft.Json;
-
-public class ToolConfiguration
+﻿public class AppSettings
 {
-    [JsonProperty("user")]
-    public User? User { get; set; }
+    public UserSettings User { get; set; } = new();
+    public ReplaysSettings Replays { get; set; } = new();
 
-    [JsonProperty("refreshInterval")]
-    public int? RefreshInterval { get; set; }
-
-    [JsonProperty("exposeApi")]
-    public bool? ExposeApi { get; set; }
+    public int RefreshInterval { get; set; }
+    public bool ExposeApi { get; set; }
 }
 
-public class User
+public class UserSettings
 {
-    [JsonProperty("battleTag")]
-    public string? BattleTag { get; set; }
+    public string BattleTag { get; set; } = string.Empty;
+}
+
+public class ReplaysSettings
+{
+    public string Folder { get; set; } = string.Empty;
+    public bool Recursive { get; set; }
 }

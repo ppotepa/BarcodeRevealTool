@@ -41,6 +41,18 @@ namespace Sc2Pulse.Models
     }
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum League
+    {
+        BRONZE = 0,
+        SILVER,
+        GOLD,
+        PLATINUM,
+        DIAMOND,
+        MASTER,
+        GRANDMASTER
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
     public enum MatchKind
     {
         _1V1,

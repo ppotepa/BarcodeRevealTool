@@ -11,6 +11,6 @@ namespace Sc2Pulse.Models
         public int? GamesPlayed { get; set; }
 
         [JsonPropertyName("rank")]
-        public int? Rank { get; set; }
+        public League? Rank { get; set; }
     }
 }

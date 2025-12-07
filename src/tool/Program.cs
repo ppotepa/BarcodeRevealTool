@@ -1,13 +1,13 @@
-﻿using Microsoft.Extensions.Configuration;
+﻿using BarcodeRevealTool.Game;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Sc2Pulse;
-
 
 namespace BarcodeRevealTool
 {
     internal class Program
     {
-        public async static Task Main(params string[] args)
+        public static async Task Main(params string[] args)
         {
             ServiceCollection collection = new ServiceCollection();
             RegisterServices(collection);
@@ -29,6 +29,7 @@ namespace BarcodeRevealTool
 
             services.AddSingleton<IConfiguration>(config);
             services.AddScoped<RevealTool>();
+            services.AddScoped<GameLobbyFactory>();
             services.AddTransient<Sc2PulseClient>();
         }
     }

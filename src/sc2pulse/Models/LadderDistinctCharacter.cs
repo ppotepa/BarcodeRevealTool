@@ -5,7 +5,7 @@ namespace Sc2Pulse.Models
     public sealed class LadderDistinctCharacter
     {
         [JsonPropertyName("leagueMax")]
-        public int? LeagueMax { get; set; }
+        public League? LeagueMax { get; set; }
 
         [JsonPropertyName("ratingMax")]
         public int? RatingMax { get; set; }
@@ -21,5 +21,7 @@ namespace Sc2Pulse.Models
 
         [JsonPropertyName("members")]
         public LadderTeamMember? Members { get; set; }
+
+        public object BuildOrder { get; set; }
     }
 }

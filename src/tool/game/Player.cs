@@ -1,7 +1,6 @@
-﻿
-namespace BarcodeRevealTool.Game
+﻿namespace BarcodeRevealTool.Game
 {
-    internal record Player()
+    public record Player()
     {
         public Player(string nickName, string tag) : this()
         {

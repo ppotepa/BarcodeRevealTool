@@ -118,6 +118,6 @@ namespace Sc2Pulse
             return await resp.Content.ReadFromJsonAsync<List<ExternalLinkResolveResult>>(_jsonOptions, cancellationToken).ConfigureAwait(false);
         }
 
-        #endregion
+        #endregion Character Endpoints
     }
 }

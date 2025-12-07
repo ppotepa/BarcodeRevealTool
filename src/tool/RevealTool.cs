@@ -1,17 +1,18 @@
 ﻿using BarcodeRevealTool.Game;
 using Microsoft.Extensions.Configuration;
+using Sc2Pulse;
 
 namespace BarcodeRevealTool
 {
     internal class RevealTool
     {
-
         private bool _running = true;
 
-        public RevealTool(IConfiguration configuration, IServiceProvider services)
+        public RevealTool(IConfiguration configuration, IServiceProvider services, Sc2PulseClient pulseClient)
         {
             configuration.Bind(Configuration);
-            this.Services = services;
+            Services = services;
+            PulseClient = pulseClient;
         }
 
         public string AppDataLocal
@@ -20,8 +21,9 @@ namespace BarcodeRevealTool
         public string LobbyFilePath
             => Path.Combine(AppDataLocal, "Temp", "Starcraft II", "TempWriteReplayP1", "replay.server.battlelobby");
 
-        public ToolConfiguration? Configuration { get; private set; }
+        public AppSettings? Configuration { get; private set; } = new();
         public IServiceProvider Services { get; }
+        public Sc2PulseClient PulseClient { get; }
 
         public async Task Run()
         {
@@ -32,13 +34,11 @@ namespace BarcodeRevealTool
                     var lobbyBytes = File.ReadAllBytes(LobbyFilePath);
 
                     var factory = Services.GetService(typeof(GameLobbyFactory)) as GameLobbyFactory;
-                    var lobby = factory?.CreateLobby(lobbyBytes);
-
+                    var lobby = factory?.CreateLobby(lobbyBytes, Configuration);
 
                     if (lobby is not null)
                     {
                         lobby.PrintLobbyInfo(Console.Out);
-                        lobby.PrintAdditionalPlayerData();
                     }
                     else
                     {
@@ -46,7 +46,7 @@ namespace BarcodeRevealTool
                     }
 
                     //todo : fix obtaining data from external servicd
-                    await Task.Delay(Configuration?.RefreshInterval ?? 100);
+                    await Task.Delay(Configuration?.RefreshInterval ?? 2000);
                 }
                 else
                 {
