@@ -7,12 +7,12 @@ A real-time StarCraft II game analyzer that reveals opponent information during 
 
 ## Overview
 
-BarcodeRevealTool monitors your StarCraft II games and displays opponent information in real-time, including:
+Monitors SC2 games and displays opponent info in real-time:
 
-- **Battle Tag identification** - Identify your opponent by their battle tag
-- **Build Order extraction** - View opponent's build order from replay data
-- **Persistent replay database** - Maintains a SQLite database of all played replays
-- **Offline-friendly** - Captures replays even when the tool isn't running
+- Opponent battle tag identification
+- Build order extraction from replays
+- Persistent SQLite replay database
+- Works offline - captures replays even when tool isn't running
 
 ## Current Features (v0.1-alpha)
 
@@ -28,96 +28,55 @@ BarcodeRevealTool monitors your StarCraft II games and displays opponent informa
 ### Prerequisites
 
 - **.NET 8.0** or later
-- **StarCraft II** installed and playable
-- **Replay files** in your StarCraft II Accounts directory
+- **StarCraft II** installed
+- Replay files in your SC2 Accounts directory
 
 ### Installation
 
-1. Clone the repository:
 ```bash
 git clone https://github.com/ppotepa/BarcodeRevealTool.git
 cd BarcodeRevealTool
-```
-
-2. Build the project:
-```bash
 dotnet build -c Release
 ```
 
-### Running the Tool
+### Configuration
 
-1. Configure `appsettings.json`:
+Edit `src/tool/appsettings.json`:
+
 ```json
 {
   "user": {
-    "battleTag": "YourBattleTag#12345"
+    "battleTag": "YourTag#12345"
   },
   "replays": {
-    "folder": "C:\\Users\\YourName\\Documents\\StarCraft II\\Accounts\\ACCOUNT_ID\\REALM-REGION\\Replays\\Multiplayer",
+    "folder": "C:\\Users\\...\\StarCraft II\\Accounts\\...\\Replays\\Multiplayer",
     "recursive": true
   },
-  "refreshInterval": 1500,
-  "exposeApi": false
+  "refreshInterval": 1500
 }
 ```
 
-2. Run the tool:
+### Running
+
 ```bash
 cd src/tool/bin/Release/net8.0
 ./BarcodeRevealTool.exe
 ```
 
-3. Start a StarCraft II game - opponent info will display automatically
+Start a SC2 game - opponent info displays automatically.
 
 ### First Run
 
-On first startup, the tool will:
-1. Scan your entire replay folder
-2. Build a SQLite cache database (`_db/replays.db`)
-3. Create a `cache.lock` file to prevent re-scanning
-4. Display caching progress: `Caching in progress.... 1 of 512`
-
-Subsequent startups sync any new replays recorded while the tool was offline.
+Scans and caches all replays (~1 minute per 500 replays). Creates `cache.lock` file. Subsequent startups sync new replays only.
 
 ## Architecture
 
-### Core Components
+**RevealTool.cs** - State machine, cache init, replay sync  
+**GameLobbyFactory.cs** - Parse lobby file, enrich with SC2 Pulse API  
+**BuildOrderReader.cs** - Extract build order from replays  
+**ReplayDatabase.cs** - SQLite persistence, queries  
 
-**RevealTool.cs**
-- Main application state machine (Awaiting / InGame)
-- Handles cache initialization and replay synchronization
-- Monitors game state changes with efficient polling
-
-**GameLobbyFactory.cs**
-- Parses lobby file data
-- Enriches with SC2 Pulse API player stats
-- Creates lobby display with team information
-
-**BuildOrderReader.cs**
-- Extracts build order from replay files using s2protocol.NET
-- Manages metadata fast extraction
-- Background async build order storage
-
-**ReplayDatabase.cs**
-- Single SQLite database for all replay persistence
-- Stores: players, map, date, SC2 version, build orders
-- Efficient queries with proper indexing
-- Insert-only policy (never deletes)
-
-### Database Schema
-
-```
-Replays (main table)
-├── Id, ReplayGuid (deterministic: filename + date)
-├── Player1, Player2, Map, Race1, Race2
-├── GameDate, SC2ClientVersion
-└── BuildOrderCached flag
-
-BuildOrderEntries (linked table)
-├── ReplayId (FK)
-├── PlayerId, TimeSeconds
-└── Kind, Name (unit/structure)
-```
+Database: Single `replays.db` with Players, Map, Date, SC2 Version, Build Orders. Insert-only policy.
 
 ## Future Roadmap
 
@@ -152,43 +111,30 @@ BuildOrderEntries (linked table)
 
 ## Development
 
-### Tech Stack
-- **.NET 8.0** - Framework
-- **System.Data.SQLite** - Database
-- **s2protocol.NET** - Replay parsing
-- **Sc2Pulse** - Player API integration
-- **Microsoft.Extensions.Configuration** - Config management
+## Tech Stack
 
-### Building from Source
+- **.NET 8.0** framework
+- **SQLite** database (System.Data.SQLite)
+- **s2protocol.NET** - Replay file parsing
+- **Sc2Pulse** - SC2 player API
+
+## Building
+
 ```bash
-dotnet build              # Debug build
-dotnet build -c Release   # Release build
-dotnet test              # Run tests (when available)
-```
-
-### Project Structure
-```
-src/
-├── sc2pulse/           # SC2 Pulse API client
-├── tool/
-│   ├── RevealTool.cs   # Main entry point
-│   ├── config/         # Configuration models
-│   ├── game/           # Game domain models
-│   ├── replay/         # Replay processing & database
-│   └── sql/            # Database schemas
+dotnet build              # Debug
+dotnet build -c Release   # Release
 ```
 
 ## Configuration
 
-Edit `appsettings.json`:
+`appsettings.json` settings:
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `user.battleTag` | Your SC2 battle tag | "Originator#21343" |
-| `replays.folder` | Path to SC2 replays | Windows default |
-| `replays.recursive` | Scan subdirectories | false |
-| `refreshInterval` | UI refresh interval (ms) | 1500 |
-| `exposeApi` | Enable API server | false |
+| Setting | Purpose |
+|---------|---------|
+| `user.battleTag` | Your SC2 battle tag |
+| `replays.folder` | SC2 replay directory path |
+| `replays.recursive` | Search subdirectories |
+| `refreshInterval` | UI update interval (ms) |
 
 ## Data Storage
 
@@ -198,18 +144,16 @@ All data stored in `_db/` subfolder relative to executable:
 
 ## Known Limitations (v0.1-alpha)
 
-- Only supports 1v1 games
-- Battle tag from lobby (not full account name with region)
-- Map name extracted from file metadata only
-- No overlay integration yet
-- No GUI - console-based only
+- 1v1 only
+- Console UI (no GUI yet)
+- Map name from file metadata only
 
 ## Performance
 
-- **Startup (first run):** ~5-10 minutes for 500+ replays
-- **Startup (cached):** <1 second
-- **In-game updates:** Minimal CPU/memory impact
-- **Database queries:** <100ms for player lookups
+- **First startup:** ~1 minute per 500 replays
+- **Subsequent startups:** <1 second (sync only)
+- **In-game:** Minimal impact, state-based updates only
+- **Database queries:** Indexed for fast lookups
 
 ## Contributing
 
