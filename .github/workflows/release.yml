@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+    
+    - name: Extract version from tag
+      id: version
+      run: |
+        $tag = "${{ github.ref }}" -replace "refs/tags/", ""
+        Write-Output "VERSION=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+    
+    - name: Restore dependencies
+      run: dotnet restore
+    
+    - name: Build Release
+      run: dotnet build -c Release --no-restore
+    
+    - name: Publish Console App (Windows x64)
+      run: |
+        dotnet publish src/console-app/BarcodeRevealTool.ConsoleApp.csproj `
+          -c Release `
+          -f net8.0 `
+          -r win-x64 `
+          --self-contained `
+          -o ./publish/win-x64
+    
+    - name: Publish Console App (Windows ARM64)
+      run: |
+        dotnet publish src/console-app/BarcodeRevealTool.ConsoleApp.csproj `
+          -c Release `
+          -f net8.0 `
+          -r win-arm64 `
+          --self-contained `
+          -o ./publish/win-arm64
+    
+    - name: Create Windows x64 Release Package
+      run: |
+        $packageDir = "BarcodeRevealTool-${{ steps.version.outputs.VERSION }}-win-x64"
+        New-Item -ItemType Directory -Path $packageDir -Force
+        Copy-Item -Path "./publish/win-x64/*" -Destination $packageDir -Recurse
+        Copy-Item -Path "./README.md" -Destination $packageDir
+        Copy-Item -Path "./ARCHITECTURE.md" -Destination $packageDir -ErrorAction SilentlyContinue
+        Compress-Archive -Path $packageDir -DestinationPath "BarcodeRevealTool-${{ steps.version.outputs.VERSION }}-win-x64.zip"
+        Remove-Item -Path $packageDir -Recurse
+    
+    - name: Create Windows ARM64 Release Package
+      run: |
+        $packageDir = "BarcodeRevealTool-${{ steps.version.outputs.VERSION }}-win-arm64"
+        New-Item -ItemType Directory -Path $packageDir -Force
+        Copy-Item -Path "./publish/win-arm64/*" -Destination $packageDir -Recurse
+        Copy-Item -Path "./README.md" -Destination $packageDir
+        Copy-Item -Path "./ARCHITECTURE.md" -Destination $packageDir -ErrorAction SilentlyContinue
+        Compress-Archive -Path $packageDir -DestinationPath "BarcodeRevealTool-${{ steps.version.outputs.VERSION }}-win-arm64.zip"
+        Remove-Item -Path $packageDir -Recurse
+    
+    - name: Create Release Notes
+      id: release_notes
+      run: |
+        $tag = "${{ github.ref }}" -replace "refs/tags/", ""
+        $notes = @"
+        # BarcodeRevealTool $tag
+        
+        ## Binaries
+        - **win-x64**: x86-64 Windows (most common)
+        - **win-arm64**: ARM64 Windows (Surface Pro, newer laptops)
+        
+        Both are self-contained builds and include all necessary dependencies.
+        
+        ## Installation
+        1. Download the appropriate ZIP for your system
+        2. Extract to a folder
+        3. Edit \`appsettings.json\` with your configuration
+        4. Run \`BarcodeRevealTool.exe\`
+        
+        For detailed setup, see [README.md](https://github.com/ppotepa/BarcodeRevealTool/blob/main/README.md)
+        "@
+        Write-Output $notes | Out-File -FilePath release_notes.txt
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          BarcodeRevealTool-${{ steps.version.outputs.VERSION }}-win-x64.zip
+          BarcodeRevealTool-${{ steps.version.outputs.VERSION }}-win-arm64.zip
+        body_path: release_notes.txt
+        draft: false
+        prerelease: ${{ contains(steps.version.outputs.VERSION, 'alpha') || contains(steps.version.outputs.VERSION, 'beta') }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

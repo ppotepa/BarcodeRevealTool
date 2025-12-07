@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
 
     steps:
     - uses: actions/checkout@v4
@@ -21,17 +24,26 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore
 
-    - name: Build
-      run: dotnet build -c Release --no-restore
+    - name: Build (${{ matrix.configuration }})
+      run: dotnet build -c ${{ matrix.configuration }} --no-restore
 
-    - name: Test
-      run: dotnet test -c Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
+    - name: Test (${{ matrix.configuration }})
+      if: matrix.configuration == 'Release'
+      run: dotnet test -c ${{ matrix.configuration }} --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
       continue-on-error: true
 
-    - name: Upload build artifact
-      if: success()
+    - name: Upload test results
+      if: always() && matrix.configuration == 'Release'
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: '**/test-results.trx'
+        retention-days: 30
+
+    - name: Upload Release build artifact
+      if: success() && matrix.configuration == 'Release'
       uses: actions/upload-artifact@v4
       with:
         name: build-release
-        path: src/tool/bin/Release/net8.0/
+        path: src/console-app/bin/Release/net8.0/
         retention-days: 7
