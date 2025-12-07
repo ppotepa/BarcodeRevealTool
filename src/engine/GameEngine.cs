@@ -128,9 +128,16 @@ namespace BarcodeRevealTool.Engine
             {
                 _outputProvider.RenderAwaitingState();
             }
-            else if (CurrentState == ToolState.InGame && _cachedLobby is not null)
+            else if (CurrentState == ToolState.InGame)
             {
-                _outputProvider.RenderLobbyInfo(_cachedLobby, _cachedLobby.AdditionalData, _cachedLobby.LastBuildOrderEntry);
+                if (_cachedLobby is not null)
+                {
+                    _outputProvider.RenderLobbyInfo(_cachedLobby, _cachedLobby.AdditionalData, _cachedLobby.LastBuildOrderEntry);
+                }
+                else
+                {
+                    _outputProvider.RenderError("Game detected but lobby data not yet loaded. Please wait...");
+                }
             }
         }
 
