@@ -29,8 +29,8 @@ namespace BarcodeRevealTool.Replay
             connection.Open();
 
             using var command = connection.CreateCommand();
-            // Read and execute the schema
-            var schemaPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "replay", "sql", "schema.sql");
+            // Read and execute the schema from schema.sqlite file
+            var schemaPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "replay", "sql", "schema.sqlite");
 
             if (File.Exists(schemaPath))
             {
@@ -342,7 +342,7 @@ namespace BarcodeRevealTool.Replay
         /// <summary>
         /// Get database statistics.
         /// </summary>
-        public (int TotalReplays, int WithBuildOrder) GetDatabaseStats()
+        public (int Total, int WithBuildOrder) GetDatabaseStats()
         {
             try
             {
@@ -363,6 +363,59 @@ namespace BarcodeRevealTool.Replay
             {
                 return (0, 0);
             }
+        }
+
+        /// <summary>
+        /// Cache replay metadata (quick insert without full replay processing).
+        /// </summary>
+        public void CacheMetadata(ReplayMetadata metadata)
+        {
+            try
+            {
+                // If we already have this replay, skip it
+                var existingReplay = GetReplayByFilePath(metadata.FilePath);
+                if (existingReplay != null)
+                {
+                    return;
+                }
+
+                // Extract player data
+                string player1 = string.Empty, player2 = string.Empty;
+                string race1 = string.Empty, race2 = string.Empty;
+
+                if (metadata.Players.Count > 0)
+                {
+                    player1 = metadata.Players[0].Name;
+                    race1 = metadata.Players[0].Race;
+                }
+
+                if (metadata.Players.Count > 1)
+                {
+                    player2 = metadata.Players[1].Name;
+                    race2 = metadata.Players[1].Race;
+                }
+
+                // Use map from metadata, fallback to "Unknown"
+                var map = !string.IsNullOrEmpty(metadata.Map) ? metadata.Map : "Unknown";
+                var gameDate = metadata.GameDate;
+                var sc2Version = metadata.SC2ClientVersion;
+
+                AddOrUpdateReplay(player1, player2, map, race1, race2, gameDate, metadata.FilePath, sc2Version);
+                // Progress is displayed by the caller (RevealTool)
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error caching metadata: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Get cache statistics (alias for database stats for compatibility).
+        /// </summary>
+        public (int Total, int WithPlayers) GetCacheStats()
+        {
+            var (total, withBuildOrder) = GetDatabaseStats();
+            return (total, withBuildOrder);
         }
 
         private static string ComputeFileHash(string filePath)

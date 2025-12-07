@@ -7,6 +7,7 @@ namespace BarcodeRevealTool.Replay
     {
         public string FilePath { get; set; } = string.Empty;
         public Guid ReplayGuid { get; set; } = Guid.Empty;
+        public string Map { get; set; } = string.Empty;
         public List<PlayerInfo> Players { get; set; } = new();
         public DateTime GameDate { get; set; }
         public string? SC2ClientVersion { get; set; }
