@@ -22,15 +22,18 @@ namespace BarcodeRevealTool.Services
 
         public async Task InitializeCacheAsync()
         {
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] InitializeCacheAsync started");
             // Check if cache has already been built
             if (File.Exists(CacheLockFile))
             {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache lock file exists, cache is already initialized");
                 _outputProvider.RenderCacheSyncMessage();
                 BuildOrderReader.InitializeCache();
                 await SyncReplaysFromDiskAsync();
                 return;
             }
 
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] No cache lock file found, initializing cache");
             _outputProvider.RenderCacheInitializingMessage();
 
             // Initialize the cache/database (creates replays.db if needed)
@@ -42,6 +45,7 @@ namespace BarcodeRevealTool.Services
             // On first startup: Build complete cache from all replays in folder
             if (appSettings?.Replays?.Folder != null && Directory.Exists(appSettings.Replays.Folder))
             {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Scanning replays folder: {appSettings.Replays.Folder}");
                 var searchOption = (appSettings.Replays.Recursive == true)
                     ? SearchOption.AllDirectories
                     : SearchOption.TopDirectoryOnly;
@@ -51,6 +55,7 @@ namespace BarcodeRevealTool.Services
                     "*.SC2Replay",
                     searchOption);
 
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {replayFiles.Length} replay files");
                 if (replayFiles.Length > 0)
                 {
                     // Use parallel processing with bounded concurrency (4 concurrent decoders)
@@ -71,6 +76,7 @@ namespace BarcodeRevealTool.Services
                         {
                             try
                             {
+                                System.Diagnostics.Debug.WriteLine($"[ReplayService] Processing replay: {Path.GetFileName(replayFile)}");
                                 var metadata = BuildOrderReader.GetReplayMetadataFast(replayFile);
 
                                 if (metadata != null && database != null)
@@ -86,6 +92,7 @@ namespace BarcodeRevealTool.Services
                             }
                             catch (Exception ex)
                             {
+                                System.Diagnostics.Debug.WriteLine($"[ReplayService] Error processing replay: {ex}");
                                 _outputProvider.RenderWarning($"Failed to cache {Path.GetFileName(replayFile)}: {ex.Message}");
                             }
                             finally
@@ -104,16 +111,22 @@ namespace BarcodeRevealTool.Services
             // Create cache lock file to prevent re-scanning on future startups
             // This ensures full cache is only built once on first startup
             File.WriteAllText(CacheLockFile, DateTime.UtcNow.ToString("O"));
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache initialization complete, lock file created");
         }
 
         public async Task SyncReplaysFromDiskAsync()
         {
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] SyncReplaysFromDiskAsync started");
             var appSettings = new AppSettings();
             _configuration.GetSection("barcodeReveal").Bind(appSettings);
 
             if (appSettings?.Replays?.Folder == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Replays folder not configured");
                 return;
+            }
 
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] Scanning folder: {appSettings.Replays.Folder}");
             var searchOption = (appSettings.Replays.Recursive == true)
                 ? SearchOption.AllDirectories
                 : SearchOption.TopDirectoryOnly;
@@ -123,9 +136,13 @@ namespace BarcodeRevealTool.Services
                 "*.SC2Replay",
                 searchOption);
 
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {replayFiles.Length} replay files");
             var database = BuildOrderReader.GetDatabase();
             if (database == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Database is null");
                 return;
+            }
 
             // Use parallel processing with bounded concurrency (4 concurrent decoders)
             int maxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2);
@@ -140,8 +157,12 @@ namespace BarcodeRevealTool.Services
             {
                 // Skip if already cached (fast DB check before decode)
                 if (database.GetReplayByFilePath(replayFile) != null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Skipping cached replay: {Path.GetFileName(replayFile)}");
                     continue;
+                }
 
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Processing new replay: {Path.GetFileName(replayFile)}");
                 await semaphore.WaitAsync();
                 tasks.Add(Task.Run(async () =>
                 {
@@ -152,6 +173,7 @@ namespace BarcodeRevealTool.Services
                         if (metadata != null)
                         {
                             database.CacheMetadata(metadata);
+                            System.Diagnostics.Debug.WriteLine($"[ReplayService] Replay added to cache: {Path.GetFileName(replayFile)}");
                             lock (lockObj)
                             {
                                 newReplaysAdded++;
@@ -160,6 +182,7 @@ namespace BarcodeRevealTool.Services
                     }
                     catch (Exception ex)
                     {
+                        System.Diagnostics.Debug.WriteLine($"[ReplayService] Error syncing replay: {ex}");
                         _outputProvider.RenderWarning($"Failed to sync {Path.GetFileName(replayFile)}: {ex.Message}");
                     }
                     finally
@@ -184,29 +207,48 @@ namespace BarcodeRevealTool.Services
         /// </summary>
         public async Task SaveReplayToDbAsync(string replayFilePath)
         {
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] SaveReplayToDbAsync: {Path.GetFileName(replayFilePath)}");
             try
             {
                 if (!File.Exists(replayFilePath))
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Replay file not found: {replayFilePath}");
                     return;
+                }
 
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] File exists, checking database");
                 var database = BuildOrderReader.GetDatabase();
                 if (database == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Database is null");
                     return;
+                }
 
                 // Check if already in database
                 if (database.GetReplayByFilePath(replayFilePath) != null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Replay already in database");
                     return;
+                }
 
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Decoding new replay");
                 // Decode and save this single replay
                 var metadata = BuildOrderReader.GetReplayMetadataFast(replayFilePath);
                 if (metadata != null)
                 {
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Saving metadata to database");
                     database.CacheMetadata(metadata);
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Replay saved successfully");
                     _outputProvider.RenderWarning($"✓ Saved replay: {Path.GetFileName(replayFilePath)}");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Failed to decode replay metadata");
                 }
             }
             catch (Exception ex)
             {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Exception in SaveReplayToDbAsync: {ex}");
                 _outputProvider.RenderWarning($"Failed to save replay: {ex.Message}");
             }
         }

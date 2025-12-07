@@ -175,20 +175,24 @@ namespace BarcodeRevealTool.Engine
                 {
                     bool lobbyFileExists = File.Exists(LobbyFilePath);
                     ToolState newState = lobbyFileExists ? ToolState.InGame : ToolState.Awaiting;
+                    System.Diagnostics.Debug.WriteLine($"[GameEngine] State check: {newState}, LobbyFileExists: {lobbyFileExists}");
 
                     // State change detected
                     if (newState != CurrentState)
                     {
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] State transition: {CurrentState} -> {newState}");
                         CurrentState = newState;
 
                         if (CurrentState == ToolState.InGame)
                         {
+                            System.Diagnostics.Debug.WriteLine($"[GameEngine] Game detected, syncing replays and processing lobby");
                             // Entering game: sync any new replays (to get opponent history)
                             await SyncReplaysFromDiskAsync();
                             await ProcessLobbyAsync();
                         }
                         else
                         {
+                            System.Diagnostics.Debug.WriteLine($"[GameEngine] Game exited, saving replay");
                             // Exiting game: save the replay that just finished
                             await OnExitingGameAsync();
                             DisplayCurrentState();
@@ -219,24 +223,30 @@ namespace BarcodeRevealTool.Engine
 
         private async Task ProcessLobbyAsync()
         {
+            System.Diagnostics.Debug.WriteLine($"[GameEngine] ProcessLobbyAsync started");
             try
             {
                 if (!File.Exists(LobbyFilePath))
                 {
+                    System.Diagnostics.Debug.WriteLine($"[GameEngine] Lobby file not found at {LobbyFilePath}");
                     _cachedLobby = null;
                     return;
                 }
 
+                System.Diagnostics.Debug.WriteLine($"[GameEngine] Reading lobby file from {LobbyFilePath}");
                 var lobbyBytes = File.ReadAllBytes(LobbyFilePath);
+                System.Diagnostics.Debug.WriteLine($"[GameEngine] Lobby file size: {lobbyBytes.Length} bytes");
                 var lobby = _gameLobbyFactory.CreateLobby(lobbyBytes, _configuration);
 
                 if (lobby is not null)
                 {
+                    System.Diagnostics.Debug.WriteLine($"[GameEngine] Lobby parsed successfully");
                     _cachedLobby = lobby as ISoloGameLobby;
 
                     // Load opponent stats asynchronously in background
                     if (_cachedLobby is not null)
                     {
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Starting background load of additional data");
                         _ = _cachedLobby.EnsureAdditionalDataLoadedAsync();
                     }
 
@@ -244,12 +254,14 @@ namespace BarcodeRevealTool.Engine
                 }
                 else
                 {
+                    System.Diagnostics.Debug.WriteLine($"[GameEngine] Lobby creation returned null");
                     _outputProvider.RenderError("Failed to parse lobby data.");
                     _cachedLobby = null;
                 }
             }
             catch (Exception ex)
             {
+                System.Diagnostics.Debug.WriteLine($"[GameEngine] Exception in ProcessLobbyAsync: {ex}");
                 _outputProvider.RenderError($"Error processing lobby: {ex.Message}");
                 _cachedLobby = null;
             }
@@ -261,6 +273,7 @@ namespace BarcodeRevealTool.Engine
         /// </summary>
         private async Task OnExitingGameAsync()
         {
+            System.Diagnostics.Debug.WriteLine($"[GameEngine] OnExitingGameAsync started");
             try
             {
                 // Find the most recently modified replay file (the one that just finished)
@@ -270,8 +283,12 @@ namespace BarcodeRevealTool.Engine
                     "StarCraft II"
                 );
 
+                System.Diagnostics.Debug.WriteLine($"[GameEngine] Looking for replays in {replayFolder}");
                 if (!Directory.Exists(replayFolder))
+                {
+                    System.Diagnostics.Debug.WriteLine($"[GameEngine] Replay folder does not exist");
                     return;
+                }
 
                 // Look for the latest replay file in the Replays folder
                 var replaysDir = Path.Combine(replayFolder, "LastReplay");
@@ -283,13 +300,24 @@ namespace BarcodeRevealTool.Engine
 
                     if (replayFiles != null)
                     {
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Found replay file: {replayFiles}");
                         // Save only this one replay to the database
                         await _replayService.SaveReplayToDbAsync(replayFiles);
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Replay saved to database");
                     }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] No replay files found in {replaysDir}");
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[GameEngine] LastReplay directory does not exist at {replaysDir}");
                 }
             }
             catch (Exception ex)
             {
+                System.Diagnostics.Debug.WriteLine($"[GameEngine] Exception in OnExitingGameAsync: {ex}");
                 _outputProvider.RenderError($"Error saving replay to database: {ex.Message}");
             }
             finally
