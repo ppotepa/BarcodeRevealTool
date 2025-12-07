@@ -16,6 +16,12 @@ namespace BarcodeRevealTool.Engine
     /// </summary>
     public class GameEngine
     {
+        /// <summary>
+        /// State check interval - hard-coded to 1500ms (non-configurable).
+        /// This is the frequency at which game state is checked and periodic events are fired.
+        /// </summary>
+        private const int StateCheckIntervalMs = 1500;
+
         private ISoloGameLobby? _cachedLobby;
         private bool _cacheInitialized = false;
         private CancellationTokenSource? _cancellationTokenSource;
@@ -37,8 +43,9 @@ namespace BarcodeRevealTool.Engine
             _gameLobbyFactory = gameLobbyFactory;
         }
 
-        // Event for state changes
+        // Events for state management
         public event EventHandler<ToolStateChangedEventArgs>? StateChanged;
+        public event EventHandler<PeriodicStateEventArgs>? PeriodicStateUpdate;
 
         public string AppDataLocal
             => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -108,6 +115,11 @@ namespace BarcodeRevealTool.Engine
             StateChanged?.Invoke(this, new ToolStateChangedEventArgs(previousState, newState));
         }
 
+        protected virtual void OnPeriodicStateUpdate(PeriodicStateEventArgs args)
+        {
+            PeriodicStateUpdate?.Invoke(this, args);
+        }
+
         private void DisplayCurrentState()
         {
             _outputProvider.Clear();
@@ -150,9 +162,6 @@ namespace BarcodeRevealTool.Engine
 
         private async Task MonitorGameStateAsync(CancellationToken cancellationToken)
         {
-            int stateCheckIntervalMs = Configuration?.RefreshInterval ?? 500; // Check state frequently but lightly
-            DateTime lastRefreshTime = DateTime.UtcNow;
-
             while (!cancellationToken.IsCancellationRequested)
             {
                 try
@@ -164,24 +173,30 @@ namespace BarcodeRevealTool.Engine
                     if (newState != CurrentState)
                     {
                         CurrentState = newState;
-                        lastRefreshTime = DateTime.UtcNow;
 
                         if (CurrentState == ToolState.InGame)
                         {
-                            // Sync any new replays before processing the current lobby
+                            // Entering game: sync any new replays (to get opponent history)
                             await SyncReplaysFromDiskAsync();
                             await ProcessLobbyAsync();
                         }
                         else
                         {
-                            // When leaving game, sync any replays that were recorded
-                            await SyncReplaysFromDiskAsync();
+                            // Exiting game: save the replay that just finished
+                            await OnExitingGameAsync();
                             DisplayCurrentState();
                         }
                     }
 
-                    lastRefreshTime = DateTime.UtcNow;
-                    await Task.Delay(stateCheckIntervalMs, cancellationToken);
+                    // Fire periodic update event (every 1500ms, regardless of state change)
+                    OnPeriodicStateUpdate(new PeriodicStateEventArgs
+                    {
+                        CurrentState = CurrentState,
+                        CurrentLobby = CurrentState == ToolState.InGame ? _cachedLobby : null,
+                        Timestamp = DateTime.UtcNow
+                    });
+
+                    await Task.Delay(StateCheckIntervalMs, cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -190,7 +205,7 @@ namespace BarcodeRevealTool.Engine
                 catch (Exception ex)
                 {
                     _outputProvider.RenderError($"Error in monitoring loop: {ex.Message}");
-                    await Task.Delay(stateCheckIntervalMs, cancellationToken);
+                    await Task.Delay(StateCheckIntervalMs, cancellationToken);
                 }
             }
         }
@@ -232,6 +247,49 @@ namespace BarcodeRevealTool.Engine
                 _cachedLobby = null;
             }
         }
+
+        /// <summary>
+        /// Called when exiting a game (InGame → Awaiting state change).
+        /// Saves the just-played replay to the database.
+        /// </summary>
+        private async Task OnExitingGameAsync()
+        {
+            try
+            {
+                // Find the most recently modified replay file (the one that just finished)
+                var replayFolder = Path.Combine(
+                    AppDataLocal,
+                    "Temp",
+                    "StarCraft II"
+                );
+
+                if (!Directory.Exists(replayFolder))
+                    return;
+
+                // Look for the latest replay file in the Replays folder
+                var replaysDir = Path.Combine(replayFolder, "LastReplay");
+                if (Directory.Exists(replaysDir))
+                {
+                    var replayFiles = Directory.GetFiles(replaysDir, "*.SC2Replay")
+                        .OrderByDescending(f => new FileInfo(f).LastWriteTime)
+                        .FirstOrDefault();
+
+                    if (replayFiles != null)
+                    {
+                        // Save only this one replay to the database
+                        await _replayService.SaveReplayToDbAsync(replayFiles);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _outputProvider.RenderError($"Error saving replay to database: {ex.Message}");
+            }
+            finally
+            {
+                _cachedLobby = null;
+            }
+        }
     }
 
     public class ToolStateChangedEventArgs : EventArgs
@@ -244,5 +302,16 @@ namespace BarcodeRevealTool.Engine
 
         public ToolState NewState { get; }
         public ToolState PreviousState { get; }
+    }
+
+    /// <summary>
+    /// Event args fired every 1500ms to update UI with current state (periodic refresh).
+    /// Different from StateChanged - fires regularly regardless of state transitions.
+    /// </summary>
+    public class PeriodicStateEventArgs : EventArgs
+    {
+        public ToolState CurrentState { get; set; }
+        public ISoloGameLobby? CurrentLobby { get; set; }
+        public DateTime Timestamp { get; set; }
     }
 }

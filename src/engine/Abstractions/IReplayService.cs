@@ -8,5 +8,10 @@ namespace BarcodeRevealTool.Engine.Abstractions
     {
         Task InitializeCacheAsync();
         Task SyncReplaysFromDiskAsync();
+        /// <summary>
+        /// Save a single replay to the database (no folder scan).
+        /// Used when exiting a game to save the just-played replay.
+        /// </summary>
+        Task SaveReplayToDbAsync(string replayFilePath);
     }
 }

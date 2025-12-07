@@ -1,3 +1,4 @@
+using BarcodeRevealTool.Engine;
 using BarcodeRevealTool.Engine.Abstractions;
 using BarcodeRevealTool.Game;
 using Sc2Pulse.Models;
@@ -67,6 +68,13 @@ namespace BarcodeRevealTool.UI.Console
         public void RenderError(string message)
         {
             AnsiConsole.MarkupLine($"[red]✗[/] [red]{EscapeMarkup(message)}[/]");
+        }
+
+        public void HandlePeriodicStateUpdate(string state, ISoloGameLobby? lobby)
+        {
+            // Periodic updates called every 1500ms
+            // Can be used for animations, status refresh, etc.
+            // Currently a no-op - can be enhanced with spinner/pulse effects while awaiting
         }
 
         public void RenderLobbyInfo(BarcodeRevealTool.Engine.Abstractions.ISoloGameLobby lobby, object? additionalData, object? lastBuildOrder)

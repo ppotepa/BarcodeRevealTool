@@ -3,7 +3,6 @@ public class AppSettings
     public UserSettings User { get; set; } = new();
     public ReplaysSettings Replays { get; set; } = new();
 
-    public int RefreshInterval { get; set; }
     public bool ExposeApi { get; set; }
 }
 

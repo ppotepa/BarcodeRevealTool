@@ -177,5 +177,38 @@ namespace BarcodeRevealTool.Services
                 _outputProvider.RenderSyncComplete(newReplaysAdded);
             }
         }
+
+        /// <summary>
+        /// Save a single replay to the database without scanning the folder.
+        /// Called when exiting a game to save the replay that just finished playing.
+        /// </summary>
+        public async Task SaveReplayToDbAsync(string replayFilePath)
+        {
+            try
+            {
+                if (!File.Exists(replayFilePath))
+                    return;
+
+                var database = BuildOrderReader.GetDatabase();
+                if (database == null)
+                    return;
+
+                // Check if already in database
+                if (database.GetReplayByFilePath(replayFilePath) != null)
+                    return;
+
+                // Decode and save this single replay
+                var metadata = BuildOrderReader.GetReplayMetadataFast(replayFilePath);
+                if (metadata != null)
+                {
+                    database.CacheMetadata(metadata);
+                    _outputProvider.RenderWarning($"✓ Saved replay: {Path.GetFileName(replayFilePath)}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _outputProvider.RenderWarning($"Failed to save replay: {ex.Message}");
+            }
+        }
     }
 }

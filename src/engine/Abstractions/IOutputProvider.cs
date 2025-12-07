@@ -16,6 +16,12 @@ namespace BarcodeRevealTool.Engine.Abstractions
         void RenderWarning(string message);
         void RenderError(string message);
         void RenderLobbyInfo(ISoloGameLobby lobby, object? additionalData, object? lastBuildOrder);
+        
+        /// <summary>
+        /// Handle periodic state updates (fired every 1500ms).
+        /// Can be used for animations, refreshing display, etc.
+        /// </summary>
+        void HandlePeriodicStateUpdate(string state, ISoloGameLobby? lobby);
     }
 
     /// <summary>

@@ -24,8 +24,23 @@ namespace BarcodeRevealTool.ConsoleApp
 
             var serviceProvider = services.BuildServiceProvider();
 
-            // Run the engine
+            // Get engine and UI provider
             var engine = serviceProvider.GetRequiredService<GameEngine>();
+            var outputProvider = serviceProvider.GetRequiredService<IOutputProvider>();
+
+            // Wire event listeners
+            // StateChanged: Full UI refresh on Awaiting ↔ InGame transitions
+            engine.StateChanged += (sender, args) =>
+            {
+                // State change already triggers DisplayCurrentState in engine
+            };
+
+            // PeriodicStateUpdate: Called every 1500ms for animations/updates
+            engine.PeriodicStateUpdate += (sender, args) =>
+            {
+                outputProvider.HandlePeriodicStateUpdate(args.CurrentState.ToString(), args.CurrentLobby);
+            };
+
             await engine.Run();
         }
     }

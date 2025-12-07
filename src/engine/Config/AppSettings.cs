@@ -4,7 +4,6 @@ namespace BarcodeRevealTool.Engine
     {
         public User? User { get; set; }
         public Replays? Replays { get; set; }
-        public int RefreshInterval { get; set; } = 500;
     }
 
     public class User
