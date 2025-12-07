@@ -367,12 +367,14 @@ namespace BarcodeRevealTool.Replay
 
         /// <summary>
         /// Cache replay metadata (quick insert without full replay processing).
+        /// Safe to call multiple times - automatically skips duplicates by file path.
+        /// Used during initial cache build on first startup.
         /// </summary>
         public void CacheMetadata(ReplayMetadata metadata)
         {
             try
             {
-                // If we already have this replay, skip it
+                // If we already have this replay by file path, skip it (idempotent)
                 var existingReplay = GetReplayByFilePath(metadata.FilePath);
                 if (existingReplay != null)
                 {

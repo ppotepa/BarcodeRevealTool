@@ -33,14 +33,14 @@ namespace BarcodeRevealTool.Services
 
             _outputProvider.RenderCacheInitializingMessage();
 
-            // Initialize the cache/database
+            // Initialize the cache/database (creates replays.db if needed)
             BuildOrderReader.InitializeCache();
 
             var appSettings = new AppSettings();
             _configuration.GetSection("barcodeReveal").Bind(appSettings);
 
-            // Scan replay folder and populate cache
-            if (appSettings?.Replays?.Folder != null)
+            // On first startup: Build complete cache from all replays in folder
+            if (appSettings?.Replays?.Folder != null && Directory.Exists(appSettings.Replays.Folder))
             {
                 var searchOption = (appSettings.Replays.Recursive == true)
                     ? SearchOption.AllDirectories
@@ -51,53 +51,58 @@ namespace BarcodeRevealTool.Services
                     "*.SC2Replay",
                     searchOption);
 
-                // Use parallel processing with bounded concurrency (4 concurrent decoders)
-                int maxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2);
-                var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
-                var database = BuildOrderReader.GetDatabase();
-
-                var tasks = new List<Task>();
-                int processedCount = 0;
-                var lockObj = new object();
-
-                // Scan all replays to populate the cache in parallel
-                foreach (var replayFile in replayFiles)
+                if (replayFiles.Length > 0)
                 {
-                    await semaphore.WaitAsync();
-                    tasks.Add(Task.Run(async () =>
+                    // Use parallel processing with bounded concurrency (4 concurrent decoders)
+                    int maxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2);
+                    var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
+                    var database = BuildOrderReader.GetDatabase();
+
+                    var tasks = new List<Task>();
+                    int processedCount = 0;
+                    var lockObj = new object();
+
+                    // Scan ALL replays to build complete cache on first startup
+                    // (no database checks - we're building from scratch)
+                    foreach (var replayFile in replayFiles)
                     {
-                        try
+                        await semaphore.WaitAsync();
+                        tasks.Add(Task.Run(async () =>
                         {
-                            var metadata = BuildOrderReader.GetReplayMetadataFast(replayFile);
-
-                            if (metadata != null && database != null)
+                            try
                             {
-                                database.CacheMetadata(metadata);
-                            }
+                                var metadata = BuildOrderReader.GetReplayMetadataFast(replayFile);
 
-                            lock (lockObj)
-                            {
-                                processedCount++;
-                                _outputProvider.RenderCacheProgress(processedCount, replayFiles.Length);
+                                if (metadata != null && database != null)
+                                {
+                                    database.CacheMetadata(metadata);
+                                }
+
+                                lock (lockObj)
+                                {
+                                    processedCount++;
+                                    _outputProvider.RenderCacheProgress(processedCount, replayFiles.Length);
+                                }
                             }
-                        }
-                        catch (Exception ex)
-                        {
-                            _outputProvider.RenderWarning($"Failed to cache {Path.GetFileName(replayFile)}: {ex.Message}");
-                        }
-                        finally
-                        {
-                            semaphore.Release();
-                        }
-                    }));
+                            catch (Exception ex)
+                            {
+                                _outputProvider.RenderWarning($"Failed to cache {Path.GetFileName(replayFile)}: {ex.Message}");
+                            }
+                            finally
+                            {
+                                semaphore.Release();
+                            }
+                        }));
+                    }
+
+                    // Wait for all tasks to complete
+                    await Task.WhenAll(tasks);
+                    _outputProvider.RenderCacheComplete();
                 }
-
-                // Wait for all tasks to complete
-                await Task.WhenAll(tasks);
-                _outputProvider.RenderCacheComplete();
             }
 
             // Create cache lock file to prevent re-scanning on future startups
+            // This ensures full cache is only built once on first startup
             File.WriteAllText(CacheLockFile, DateTime.UtcNow.ToString("O"));
         }
 
