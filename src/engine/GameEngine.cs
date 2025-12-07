@@ -51,7 +51,7 @@ namespace BarcodeRevealTool.Engine
             {
                 if (_currentState != value)
                 {
-                    var previousState = _currentState;
+                    ToolState previousState = _currentState;
                     _currentState = value;
                     OnStateChanged(previousState, value);
                 }

@@ -1,8 +1,7 @@
-using Spectre.Console;
 using BarcodeRevealTool.Engine.Abstractions;
 using BarcodeRevealTool.Game;
-using BarcodeRevealTool.game.lobbies;
 using Sc2Pulse.Models;
+using Spectre.Console;
 
 namespace BarcodeRevealTool.UI.Console
 {
@@ -25,7 +24,7 @@ namespace BarcodeRevealTool.UI.Console
 
         public void RenderStateChange(string from, string to)
         {
-            AnsiConsole.MarkupLine($"[cyan]State Change:[/] [grey]{from}[/] → [green]{to}[/]");
+            AnsiConsole.MarkupLine($"[cyan]State Change:[/] [grey]{from}[/] CHANGED TO [green]{to}[/]");
         }
 
         public void RenderCacheInitializingMessage()

@@ -130,17 +130,19 @@ namespace BarcodeRevealTool.Services
             var lockObj = new object();
 
             // Check each replay file in parallel
+            // IMPORTANT: Check database FIRST before expensive file decode
             foreach (var replayFile in replayFiles)
             {
+                // Skip if already cached (fast DB check before decode)
+                if (database.GetReplayByFilePath(replayFile) != null)
+                    continue;
+
                 await semaphore.WaitAsync();
                 tasks.Add(Task.Run(async () =>
                 {
                     try
                     {
-                        var existing = database.GetReplayByFilePath(replayFile);
-                        if (existing != null)
-                            return;
-
+                        // Only decode if NOT already in database
                         var metadata = BuildOrderReader.GetReplayMetadataFast(replayFile);
                         if (metadata != null)
                         {
