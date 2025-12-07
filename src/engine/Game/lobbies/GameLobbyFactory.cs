@@ -20,29 +20,36 @@ namespace BarcodeRevealTool.Game
 
         public IGameLobby CreateLobby(byte[] bytes, AppSettings? configuration)
         {
-            var playerMatches = ExtractPlayerMatches(bytes);
-
-            ValidateLobbyFormat(playerMatches);
-
-            var team1 = CreateTeam("Team 1", playerMatches, team1Index: true);
-            var team2 = CreateTeam("Team 2", playerMatches, team1Index: false);
-
-            var userBattleTag = configuration?.User.BattleTag ?? string.Empty;
-            var (usersTeamSelector, oppositeTeamSelector) = CreateTeamSelectors(userBattleTag);
-
-            var lobby = new GameLobby()
+            try
             {
-                Team1 = team1,
-                Team2 = team2,
-                OppositeTeam = oppositeTeamSelector,
-                UsersTeam = usersTeamSelector
-            };
+                var playerMatches = ExtractPlayerMatches(bytes);
 
-            // Fetch last build order entry asynchronously
-            var a = PopulateLastBuildOrderAsync(lobby, configuration);
+                ValidateLobbyFormat(playerMatches);
 
-            // AdditionalData will be lazily initialized in PrintLobbyInfo if needed
-            return lobby;
+                var team1 = CreateTeam("Team 1", playerMatches, team1Index: true);
+                var team2 = CreateTeam("Team 2", playerMatches, team1Index: false);
+
+                var userBattleTag = configuration?.User.BattleTag ?? string.Empty;
+                var (usersTeamSelector, oppositeTeamSelector) = CreateTeamSelectors(userBattleTag);
+
+                var lobby = new GameLobby()
+                {
+                    Team1 = team1,
+                    Team2 = team2,
+                    OppositeTeam = oppositeTeamSelector,
+                    UsersTeam = usersTeamSelector
+                };
+
+                // Fetch last build order entry asynchronously
+                var a = PopulateLastBuildOrderAsync(lobby, configuration);
+
+                // AdditionalData will be lazily initialized in PrintLobbyInfo if needed
+                return lobby;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to parse lobby data: {ex.Message}", ex);
+            }
         }
 
         private async Task PopulateLastBuildOrderAsync(GameLobby lobby, AppSettings? configuration)
@@ -87,11 +94,12 @@ namespace BarcodeRevealTool.Game
 
         private void ValidateLobbyFormat(MatchCollection playerMatches)
         {
-            bool isValidFormat = playerMatches.Count % 2 == 0 && playerMatches.Count / 3 == 2;
-
-            if (!isValidFormat)
+            // For 1v1, we need exactly 6 matches: 3 for team 1, 3 for team 2
+            // Each team: [name, unknown, tag] = 6 total
+            // Indices used: 0(name1), 2(tag1), 3(name2), 5(tag2) + 2 extras
+            if (playerMatches.Count != 6)
             {
-                throw new InvalidOperationException("Unsupported lobby format or player count.");
+                throw new InvalidOperationException($"Expected 6 player name matches for 1v1, but found {playerMatches.Count}. Unsupported lobby format or player count.");
             }
         }
 
