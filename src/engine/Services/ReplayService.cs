@@ -31,7 +31,7 @@ namespace BarcodeRevealTool.Services
             {
                 System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache lock file exists, loading cached replays into memory");
                 BuildOrderReader.InitializeCache();
-                
+
                 // Load all cached replays into memory for efficient sync
                 var database = BuildOrderReader.GetDatabase();
                 if (database != null)
@@ -39,7 +39,9 @@ namespace BarcodeRevealTool.Services
                     _cacheManager.LoadCachedFilePaths(database);
                     System.Diagnostics.Debug.WriteLine($"[ReplayService] Loaded {_cacheManager.CachedFileCount} cached replays into memory");
                 }
-                
+
+                // Only sync if user has added new replays to the folder
+                // Skip sync if cache is up to date
                 await SyncReplaysFromDiskAsync();
                 return;
             }
@@ -106,7 +108,7 @@ namespace BarcodeRevealTool.Services
                                         metadata.Players.Count > 0 ? metadata.Players[0].PlayerId : null,
                                         metadata.Players.Count > 1 ? metadata.Players[1].PlayerId : null
                                     );
-                                    
+
                                     // Add to in-memory cache
                                     _cacheManager.AddCachedFile(metadata.FilePath);
                                 }
@@ -153,6 +155,7 @@ namespace BarcodeRevealTool.Services
             if (appSettings?.Replays?.Folder == null)
             {
                 System.Diagnostics.Debug.WriteLine($"[ReplayService] Replays folder not configured");
+                OnCacheOperationComplete?.Invoke();
                 return;
             }
 
@@ -171,22 +174,23 @@ namespace BarcodeRevealTool.Services
             if (database == null)
             {
                 System.Diagnostics.Debug.WriteLine($"[ReplayService] Database is null");
+                OnCacheOperationComplete?.Invoke();
                 return;
             }
 
             // Get list of NEW replay files (on disk but not in cache)
             var newReplayFiles = _cacheManager.GetNewReplayFiles(allReplayFiles);
-            
+
             System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {newReplayFiles.Count} new replay files to add");
 
             if (newReplayFiles.Count == 0)
             {
-                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache is up to date, no new replays");
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache is up to date, no new replays to process");
                 OnCacheOperationComplete?.Invoke();
                 return;
             }
 
-            // Show sync progress message
+            // Show sync progress message only if there are new files
             _outputProvider.RenderCacheSyncMessage();
 
             // Use parallel processing with bounded concurrency
@@ -263,9 +267,7 @@ namespace BarcodeRevealTool.Services
 
             // Notify that cache operation is complete so UI can refresh
             OnCacheOperationComplete?.Invoke();
-        }
-
-        /// <summary>
+        }        /// <summary>
         /// Save a single replay to the database without scanning the folder.
         /// Called when exiting a game to save the replay that just finished playing.
         /// </summary>
