@@ -186,50 +186,102 @@ namespace BarcodeRevealTool.Game
 
         private Team FindTeam(Team? team1, Team? team2, string userBattleTag, bool isUsers)
         {
-            if (string.IsNullOrEmpty(userBattleTag))
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: checking which lobby player is a known user account");
+            
+            if (team1 == null || team2 == null)
             {
-                // Fallback if no user tag - return first team
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: team1 or team2 is null, using fallback");
                 return isUsers ? team1! : team2!;
             }
 
-            // Prepare normalized versions for robust comparison
-            string? namePrefix = ExtractNamePrefix(userBattleTag); // e.g., "Ignacy" from "Ignacy_236"
-            string displayBattleTag = userBattleTag.Replace('_', '#');
-            string underscoreBattleTag = userBattleTag.Replace('#', '_');
+            var player1 = team1.Players.FirstOrDefault();
+            var player2 = team2.Players.FirstOrDefault();
 
-            // Debug: list players in both teams
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: userBattleTag='{userBattleTag}', display='{displayBattleTag}', prefix='{namePrefix}'");
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Team1 players: {string.Join(", ", team1?.Players.Select(p => p.Tag + " (" + p.NickName + ")") ?? new string[0])}");
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Team2 players: {string.Join(", ", team2?.Players.Select(p => p.Tag + " (" + p.NickName + ")") ?? new string[0])}");
-
-            bool IsUserMatch(Player p)
+            if (player1 == null || player2 == null)
             {
-                if (p == null) return false;
-                var pTag = p.Tag ?? string.Empty;
-                var pNick = p.NickName ?? string.Empty;
-
-                var pTagDisplay = pTag.Replace('_', '#');
-                var pTagUnderscore = pTag.Replace('#', '_');
-
-                // Exact matches (either stored form or normalized forms)
-                if (string.Equals(pTag, userBattleTag, StringComparison.OrdinalIgnoreCase)) return true;
-                if (string.Equals(pTagDisplay, displayBattleTag, StringComparison.OrdinalIgnoreCase)) return true;
-                if (string.Equals(pTagUnderscore, underscoreBattleTag, StringComparison.OrdinalIgnoreCase)) return true;
-
-                // Match by nickname (display form)
-                if (string.Equals(pNick, displayBattleTag, StringComparison.OrdinalIgnoreCase)) return true;
-
-                // Match by name prefix (loose match) as a last resort
-                if (!string.IsNullOrEmpty(namePrefix) && pNick.StartsWith(namePrefix, StringComparison.OrdinalIgnoreCase)) return true;
-
-                return false;
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: player1 or player2 is null, using fallback");
+                return isUsers ? team1! : team2!;
             }
 
-            var userInTeam1 = team1?.Players.Any(p => IsUserMatch(p)) ?? false;
+            var player1Name = player1.NickName ?? string.Empty;
+            var player2Name = player2.NickName ?? string.Empty;
 
-            var userTeam = userInTeam1 ? team1 : team2;
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] User assigned to {(userInTeam1 ? "Team1" : "Team2")}");
-            return isUsers ? userTeam! : (userTeam == team1 ? team2 : team1)!;
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: Checking lobby players for known user accounts");
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: Team1 player: '{player1Name}', Team2 player: '{player2Name}'");
+
+            try
+            {
+                var database = new ReplayDatabase();
+                
+                // Check if either lobby player is a known user account (exact match)
+                bool player1IsUser = database.IsKnownUserAccount(player1Name);
+                bool player2IsUser = database.IsKnownUserAccount(player2Name);
+
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: player1 '{player1Name}' isUser={player1IsUser}, player2 '{player2Name}' isUser={player2IsUser}");
+
+                Team? userTeam = null;
+
+                if (player1IsUser && !player2IsUser)
+                {
+                    // Player1 is the user
+                    userTeam = team1;
+                    System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: Player1 '{player1Name}' is the known user account");
+                }
+                else if (player2IsUser && !player1IsUser)
+                {
+                    // Player2 is the user
+                    userTeam = team2;
+                    System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: Player2 '{player2Name}' is the known user account");
+                }
+                else if (player1IsUser && player2IsUser)
+                {
+                    // Both are known users - this shouldn't happen in normal gameplay, use Team1 as primary
+                    userTeam = team1;
+                    System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: Both players are known accounts, using Team1 as primary");
+                }
+                else
+                {
+                    // Neither player is a known account - use configured user or fallback
+                    if (!string.IsNullOrEmpty(userBattleTag))
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: No exact match found, using configured userBattleTag='{userBattleTag}' as fallback");
+                        // Try to match against config user tag
+                        var displayBattleTag = userBattleTag.Replace('_', '#');
+                        if (string.Equals(player1Name, displayBattleTag, StringComparison.OrdinalIgnoreCase))
+                        {
+                            userTeam = team1;
+                            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: Matched Player1 to configured user tag");
+                        }
+                        else if (string.Equals(player2Name, displayBattleTag, StringComparison.OrdinalIgnoreCase))
+                        {
+                            userTeam = team2;
+                            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: Matched Player2 to configured user tag");
+                        }
+                        else
+                        {
+                            // No match, use Team1 as default
+                            userTeam = team1;
+                            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: No match to configured tag, defaulting to Team1");
+                        }
+                    }
+                    else
+                    {
+                        // No configured user, use Team1 as default
+                        userTeam = team1;
+                        System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: No configured user, defaulting to Team1");
+                    }
+                }
+
+                var oppositeTeam = (userTeam == team1) ? team2 : team1;
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: User team = {(userTeam == team1 ? "Team1" : "Team2")}, Opposite team = {(oppositeTeam == team1 ? "Team1" : "Team2")}");
+                return isUsers ? userTeam : oppositeTeam;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: Exception during user validation: {ex.Message}, using fallback");
+                // Fallback if database check fails
+                return isUsers ? team1 : team2;
+            }
         }
 
         /// <summary>

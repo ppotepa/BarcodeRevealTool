@@ -586,7 +586,14 @@ namespace BarcodeRevealTool.Services
             try
             {
                 var database = new ReplayDatabase();
-                return database.GetOpponentMatchHistory(yourPlayerName, opponentName, limit);
+                
+                // Validate and normalize player names against known user accounts
+                var validatedYourName = database.ValidateAndNormalizePlayerName(yourPlayerName);
+                var validatedOpponentName = database.ValidateAndNormalizePlayerName(opponentName);
+                
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] GetOpponentMatchHistory: original names: you='{yourPlayerName}', opponent='{opponentName}' -> validated: you='{validatedYourName}', opponent='{validatedOpponentName}'");
+                
+                return database.GetOpponentMatchHistory(validatedYourName, validatedOpponentName, limit);
             }
             catch (Exception ex)
             {

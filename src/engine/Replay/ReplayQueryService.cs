@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Data.SQLite;
 using System.Linq;
 using SqlKata;
@@ -520,14 +521,25 @@ namespace BarcodeRevealTool.Engine.Replay
                 return;
 
             string normalizedUserTag = NormalizeTag(userBattleTag);
-            string userPrefix = GetTagPrefix(normalizedUserTag);
             var now = DateTime.UtcNow.ToString("O");
 
             using var queryFactory = CreateQueryFactory();
+            var (knownUserTags, knownUserPrefixes) = LoadKnownUserAccountAliases(queryFactory);
+            if (!string.IsNullOrEmpty(normalizedUserTag))
+            {
+                knownUserTags.Add(normalizedUserTag);
+                var userPrefix = GetTagPrefix(normalizedUserTag);
+                if (!string.IsNullOrEmpty(userPrefix))
+                {
+                    knownUserPrefixes.Add(userPrefix);
+                }
+            }
+
             const string upsertSql = @"
-                    INSERT INTO Opponents (Name, ToonHandle, BattleTag, FirstSeen, LastSeen, UpdatedAt)
-                    VALUES (@Name, @ToonHandle, @BattleTag, @FirstSeen, @LastSeen, @UpdatedAt)
+                    INSERT INTO Opponents (Name, DisplayName, ToonHandle, BattleTag, FirstSeen, LastSeen, UpdatedAt)
+                    VALUES (@Name, @DisplayName, @ToonHandle, @BattleTag, @FirstSeen, @LastSeen, @UpdatedAt)
                     ON CONFLICT(Name) DO UPDATE SET
+                        DisplayName = excluded.DisplayName,
                         ToonHandle = CASE WHEN excluded.ToonHandle != '' THEN excluded.ToonHandle ELSE Opponents.ToonHandle END,
                         BattleTag = CASE WHEN excluded.BattleTag != '' THEN excluded.BattleTag ELSE Opponents.BattleTag END,
                         LastSeen = excluded.LastSeen,
@@ -536,27 +548,17 @@ namespace BarcodeRevealTool.Engine.Replay
 
             foreach (var player in players)
             {
-                string name = NormalizeTag(player.Name);
-                if (string.IsNullOrWhiteSpace(name))
+                string displayName = BuildDisplayName(player);
+                string normalizedName = NormalizeTag(displayName);
+                if (string.IsNullOrWhiteSpace(normalizedName))
                     continue;
 
-                string battleTag = string.IsNullOrWhiteSpace(player.BattleTag)
-                    ? name
-                    : NormalizeTag(player.BattleTag);
+                string battleTag = BuildBattleTag(player);
+                if (string.IsNullOrWhiteSpace(battleTag))
+                    continue;
 
-                if (!string.IsNullOrEmpty(normalizedUserTag))
-                {
-                    string namePrefix = GetTagPrefix(name);
-                    string battlePrefix = GetTagPrefix(battleTag);
-
-                    if (name.Equals(normalizedUserTag, StringComparison.OrdinalIgnoreCase) ||
-                        battleTag.Equals(normalizedUserTag, StringComparison.OrdinalIgnoreCase) ||
-                        (!string.IsNullOrEmpty(userPrefix) && (namePrefix.Equals(userPrefix, StringComparison.OrdinalIgnoreCase) ||
-                                                               battlePrefix.Equals(userPrefix, StringComparison.OrdinalIgnoreCase))))
-                    {
-                        continue;
-                    }
-                }
+                if (MatchesKnownUserAccount(normalizedName, battleTag, knownUserTags, knownUserPrefixes))
+                    continue;
 
                 string toonHandle = string.IsNullOrWhiteSpace(player.PlayerId)
                     ? string.Empty
@@ -564,9 +566,10 @@ namespace BarcodeRevealTool.Engine.Replay
 
                 var parameters = new
                 {
-                    Name = name,
+                    Name = normalizedName,
+                    DisplayName = displayName,
                     ToonHandle = string.IsNullOrWhiteSpace(toonHandle) ? null : toonHandle,
-                    BattleTag = string.IsNullOrWhiteSpace(battleTag) ? null : battleTag,
+                    BattleTag = battleTag,
                     FirstSeen = now,
                     LastSeen = now,
                     UpdatedAt = now
@@ -578,9 +581,112 @@ namespace BarcodeRevealTool.Engine.Replay
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[ReplayQueryService] Failed to upsert opponent {name}: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[ReplayQueryService] Failed to upsert opponent {normalizedName}: {ex.Message}");
                 }
             }
+        }
+
+        private static (HashSet<string> tags, HashSet<string> prefixes) LoadKnownUserAccountAliases(QueryFactory queryFactory)
+        {
+            var tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var prefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                var rows = queryFactory.Query("UserAccounts")
+                    .Select("NickName", "BattleTag")
+                    .Get<dynamic>();
+
+                foreach (var row in rows)
+                {
+                    AddAlias(row.NickName);
+                    AddAlias(row.BattleTag);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayQueryService] Failed to load user accounts for opponent filtering: {ex.Message}");
+            }
+
+            return (tags, prefixes);
+
+            void AddAlias(object? value)
+            {
+                var normalized = NormalizeTag(value?.ToString());
+                if (string.IsNullOrWhiteSpace(normalized))
+                    return;
+
+                tags.Add(normalized);
+
+                var prefix = GetTagPrefix(normalized);
+                if (!string.IsNullOrEmpty(prefix))
+                {
+                    prefixes.Add(prefix);
+                }
+            }
+        }
+
+        private static bool MatchesKnownUserAccount(string normalizedName, string normalizedBattleTag,
+            HashSet<string> knownUserTags, HashSet<string> knownUserPrefixes)
+        {
+            if (!string.IsNullOrEmpty(normalizedName) && knownUserTags.Contains(normalizedName))
+                return true;
+
+            if (!string.IsNullOrEmpty(normalizedBattleTag) && knownUserTags.Contains(normalizedBattleTag))
+                return true;
+
+            var namePrefix = GetTagPrefix(normalizedName);
+            if (!string.IsNullOrEmpty(namePrefix) && knownUserPrefixes.Contains(namePrefix))
+                return true;
+
+            var battlePrefix = GetTagPrefix(normalizedBattleTag);
+            if (!string.IsNullOrEmpty(battlePrefix) && knownUserPrefixes.Contains(battlePrefix))
+                return true;
+
+            return false;
+        }
+
+        private static string BuildDisplayName(PlayerInfo player)
+        {
+            var normalizedName = NormalizeTag(player.Name);
+            if (HasBattleTagSuffix(normalizedName))
+            {
+                return normalizedName;
+            }
+
+            var normalizedBattleTag = NormalizeTag(player.BattleTag);
+            if (HasBattleTagSuffix(normalizedBattleTag))
+            {
+                return normalizedBattleTag;
+            }
+
+            return !string.IsNullOrEmpty(normalizedName)
+                ? normalizedName
+                : normalizedBattleTag;
+        }
+
+        private static string BuildBattleTag(PlayerInfo player)
+        {
+            var normalizedBattleTag = NormalizeTag(player.BattleTag);
+            if (HasBattleTagSuffix(normalizedBattleTag))
+            {
+                return normalizedBattleTag;
+            }
+
+            var normalizedName = NormalizeTag(player.Name);
+            if (HasBattleTagSuffix(normalizedName))
+            {
+                return normalizedName;
+            }
+
+            return !string.IsNullOrEmpty(normalizedBattleTag)
+                ? normalizedBattleTag
+                : normalizedName;
+        }
+
+        private static bool HasBattleTagSuffix(string? value)
+        {
+            return !string.IsNullOrWhiteSpace(value) && value.Contains('#');
         }
 
         private static string NormalizeTag(string? value)
