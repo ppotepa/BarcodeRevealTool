@@ -15,4 +15,5 @@ public class ReplaysSettings
 {
     public string Folder { get; set; } = string.Empty;
     public bool Recursive { get; set; }
+    public bool ShowLastBuildOrder { get; set; } = false;
 }

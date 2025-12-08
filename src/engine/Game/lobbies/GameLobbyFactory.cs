@@ -63,6 +63,12 @@ namespace BarcodeRevealTool.Game
             System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] PopulateLastBuildOrderAsync started");
             try
             {
+                if (configuration?.Replays.ShowLastBuildOrder == false)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] ShowLastBuildOrder is disabled, skipping");
+                    return;
+                }
+
                 if (configuration?.Replays.Folder == null || lobby.OppositeTeam == null)
                 {
                     System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Replays folder or OppositeTeam is null, skipping");
@@ -130,11 +136,16 @@ namespace BarcodeRevealTool.Game
             int nameMatchIndex = team1Index ? 0 : 3;
             int tagMatchIndex = team1Index ? 2 : 5;
 
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] CreateTeam {teamName}: nameIdx={nameMatchIndex}, tagIdx={tagMatchIndex}");
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Match[{nameMatchIndex}]={playerMatches[nameMatchIndex].Value}, Match[{tagMatchIndex}]={playerMatches[tagMatchIndex].Value}");
+
             var player = new Player
             {
                 NickName = playerMatches[nameMatchIndex].Groups["name"].Value,
                 Tag = playerMatches[tagMatchIndex].Groups["name"].Value
             };
+
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Created player: NickName={player.NickName}, Tag={player.Tag}");
 
             return new(teamName) { Players = [player] };
         }
