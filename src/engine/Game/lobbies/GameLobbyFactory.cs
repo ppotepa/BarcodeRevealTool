@@ -150,20 +150,8 @@ namespace BarcodeRevealTool.Game
         {
             var hasUser = (Team? team) => team?.Players.Any(p => p.Tag == userBattleTag) ?? false;
 
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: team1Tag={team1?.Players.FirstOrDefault()?.Tag}, team2Tag={team2?.Players.FirstOrDefault()?.Tag}, userBattleTag={userBattleTag}");
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: team1HasUser={hasUser(team1)}, team2HasUser={hasUser(team2)}");
-
             var userTeam = hasUser(team1) ? team1 : team2;
-            var result = isUsers ? userTeam : (userTeam == team1 ? team2 : team1);
-            
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam returning: {result?.Players.FirstOrDefault()?.Tag} (isUsers={isUsers})");
-            
-            if (result == null)
-            {
-                throw new InvalidOperationException($"Could not find appropriate team for user {userBattleTag}");
-            }
-            
-            return result;
+            return isUsers ? userTeam! : (userTeam == team1 ? team2 : team1)!;
         }
     }
 }
