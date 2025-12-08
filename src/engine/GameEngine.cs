@@ -280,6 +280,9 @@ namespace BarcodeRevealTool.Engine
                             System.Diagnostics.Debug.WriteLine($"[SC2Monitor] StarCraft II process terminated");
                         }
                         wasRunningLastCheck = isRunning;
+
+                        // Refresh display when process state changes
+                        DisplayCurrentState();
                     }
 
                     // Check every 2 seconds
