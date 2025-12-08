@@ -196,10 +196,10 @@ namespace BarcodeRevealTool.Engine
                     // Only check for lobby if SC2 process is running
                     bool sc2IsRunning = _gameStateManager.IsStarCraft2Running();
                     bool lobbyFileExists = sc2IsRunning && File.Exists(LobbyFilePath);
-                    
+
                     // Update game process state (fires events if state changed)
                     _gameStateManager.UpdateGameProcessState(lobbyFileExists);
-                    
+
                     ToolState newState = lobbyFileExists ? ToolState.InGame : ToolState.Awaiting;
                     System.Diagnostics.Debug.WriteLine($"[GameEngine] State check: {newState}, SC2Running: {sc2IsRunning}, LobbyFileExists: {lobbyFileExists}");
 
@@ -399,7 +399,7 @@ namespace BarcodeRevealTool.Engine
         private void OnGameProcessStateChanged(object? sender, GameProcessStateChangedEventArgs e)
         {
             System.Diagnostics.Debug.WriteLine($"[GameEngine] Game process state changed: {e.OldState} -> {e.NewState}");
-            
+
             if (e.NewState == GameStateManager.GameProcessState.NotRunning)
             {
                 // Game exited

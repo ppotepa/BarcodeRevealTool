@@ -144,10 +144,17 @@ namespace BarcodeRevealTool.Services
                 return;
             }
 
+            // Show sync progress message
+            if (replayFiles.Length > 0)
+            {
+                _outputProvider.RenderCacheSyncMessage();
+            }
+
             // Use parallel processing with bounded concurrency (4 concurrent decoders)
             int maxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2);
             var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
             var tasks = new List<Task>();
+            int processedCount = 0;
             int newReplaysAdded = 0;
             var lockObj = new object();
 
@@ -159,6 +166,11 @@ namespace BarcodeRevealTool.Services
                 if (database.GetReplayByFilePath(replayFile) != null)
                 {
                     System.Diagnostics.Debug.WriteLine($"[ReplayService] Skipping cached replay: {Path.GetFileName(replayFile)}");
+                    lock (lockObj)
+                    {
+                        processedCount++;
+                        _outputProvider.RenderCacheProgress(processedCount, replayFiles.Length);
+                    }
                     continue;
                 }
 
@@ -187,6 +199,11 @@ namespace BarcodeRevealTool.Services
                     }
                     finally
                     {
+                        lock (lockObj)
+                        {
+                            processedCount++;
+                            _outputProvider.RenderCacheProgress(processedCount, replayFiles.Length);
+                        }
                         semaphore.Release();
                     }
                 }));
