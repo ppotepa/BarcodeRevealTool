@@ -12,12 +12,6 @@ namespace BarcodeRevealTool.Game
     {
         private static readonly Regex PlayerNamePattern = new("(?<name>[A-Za-z][A-Za-z0-9]{2,20}#[0-9]{3,6})");
 
-        private readonly Func<Team, string, bool> TeamContainsUserPredicate =
-            (team, userBattleTag) => team!.Players.Any(p => p.Tag == userBattleTag);
-
-        private Func<Team?, string, bool> TeamMatchesPredicate =>
-            (team, userBattleTag) => TeamContainsUserPredicate(team!, userBattleTag);
-
         public IGameLobby CreateLobby(byte[] bytes, AppSettings? configuration)
         {
             System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] CreateLobby called with {bytes.Length} bytes");
@@ -34,15 +28,17 @@ namespace BarcodeRevealTool.Game
 
                 var userBattleTag = configuration?.User.BattleTag ?? string.Empty;
                 System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] User battle tag: {userBattleTag}");
-                var (usersTeamSelector, oppositeTeamSelector) = CreateTeamSelectors(userBattleTag);
+                
+                var usersTeam = FindTeam(team1, team2, userBattleTag, isUsers: true);
+                var oppositeTeam = FindTeam(team1, team2, userBattleTag, isUsers: false);
 
                 System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Creating lobby with Team1: {team1?.Players.FirstOrDefault()?.Tag}, Team2: {team2?.Players.FirstOrDefault()?.Tag}");
                 var lobby = new GameLobby()
                 {
                     Team1 = team1,
                     Team2 = team2,
-                    OppositeTeam = oppositeTeamSelector,
-                    UsersTeam = usersTeamSelector
+                    OppositeTeam = _ => oppositeTeam,
+                    UsersTeam = _ => usersTeam
                 };
 
                 // Fetch last build order entry asynchronously in background (fire-and-forget)
@@ -150,22 +146,12 @@ namespace BarcodeRevealTool.Game
             return new(teamName) { Players = [player] };
         }
 
-        private (Func<ISoloGameLobby, Team>, Func<ISoloGameLobby, Team>) CreateTeamSelectors(string userBattleTag)
+        private Team FindTeam(Team? team1, Team? team2, string userBattleTag, bool isUsers)
         {
-            var usersTeamSelector = (ISoloGameLobby lobby) => GetTeamByPredicate(lobby, userBattleTag, match: true);
-            var oppositeTeamSelector = (ISoloGameLobby lobby) => GetTeamByPredicate(lobby, userBattleTag, match: false);
-
-            return (usersTeamSelector, oppositeTeamSelector);
-        }
-
-        private Team GetTeamByPredicate(ISoloGameLobby lobby, string userBattleTag, bool match)
-        {
-            var teams = new[] { lobby.Team1, lobby.Team2! };
-            var predicate = match
-                ? (Func<Team?, bool>)(team => TeamMatchesPredicate(team, userBattleTag))
-                : (team => !TeamMatchesPredicate(team, userBattleTag));
-
-            return teams.Where(predicate).First()!;
+            var hasUser = (Team? team) => team?.Players.Any(p => p.Tag == userBattleTag) ?? false;
+            
+            var userTeam = hasUser(team1) ? team1 : team2;
+            return isUsers ? userTeam! : (userTeam == team1 ? team2 : team1)!;
         }
     }
 }
