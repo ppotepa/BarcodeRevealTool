@@ -126,7 +126,15 @@ namespace BarcodeRevealTool.Engine
 
             if (CurrentState == ToolState.Awaiting)
             {
-                _outputProvider.RenderAwaitingState();
+                var sc2IsRunning = IsStarCraft2Running();
+                if (sc2IsRunning)
+                {
+                    _outputProvider.RenderWarning("StarCraft II is running but no match detected yet. Waiting for match...");
+                }
+                else
+                {
+                    _outputProvider.RenderAwaitingState();
+                }
             }
             else if (CurrentState == ToolState.InGame)
             {
@@ -138,6 +146,19 @@ namespace BarcodeRevealTool.Engine
                 {
                     _outputProvider.RenderError("Game detected but lobby data not yet loaded. Please wait...");
                 }
+            }
+        }
+
+        private bool IsStarCraft2Running()
+        {
+            try
+            {
+                return System.Diagnostics.Process.GetProcessesByName("SC2").Length > 0 ||
+                       System.Diagnostics.Process.GetProcessesByName("StarCraft II").Length > 0;
+            }
+            catch
+            {
+                return false;
             }
         }
 
