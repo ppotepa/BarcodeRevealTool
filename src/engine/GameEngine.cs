@@ -95,6 +95,9 @@ namespace BarcodeRevealTool.Engine
             // Start background monitoring thread immediately
             _monitoringTask = MonitorGameStateAsync(token);
 
+            // Start SC2 process monitor in background
+            var sc2MonitorTask = MonitorSc2ProcessAsync(token);
+
             // Display initial state
             DisplayCurrentState();
 
@@ -242,9 +245,54 @@ namespace BarcodeRevealTool.Engine
             }
         }
 
+        /// <summary>
+        /// Monitors whether SC2 process is running (32-bit or 64-bit) and logs status.
+        /// Runs independently from main game state monitoring.
+        /// </summary>
+        private async Task MonitorSc2ProcessAsync(CancellationToken cancellationToken)
+        {
+            bool wasRunningLastCheck = false;
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    bool isRunning = _gameStateManager.IsStarCraft2Running();
+
+                    // Only log when state changes
+                    if (isRunning != wasRunningLastCheck)
+                    {
+                        if (isRunning)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[SC2Monitor] StarCraft II process detected (32-bit or 64-bit)");
+                            _outputProvider.RenderWarning("StarCraft II process detected");
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[SC2Monitor] StarCraft II process no longer running");
+                        }
+                        wasRunningLastCheck = isRunning;
+                    }
+
+                    // Check every 2 seconds
+                    await Task.Delay(2000, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SC2Monitor] Error: {ex.Message}");
+                    await Task.Delay(2000, cancellationToken);
+                }
+            }
+        }
+
         private async Task ProcessLobbyAsync()
         {
             System.Diagnostics.Debug.WriteLine($"[GameEngine] ProcessLobbyAsync started");
+
             try
             {
                 if (!File.Exists(LobbyFilePath))
