@@ -622,7 +622,7 @@ namespace BarcodeRevealTool.Replay
 
         /// <summary>
         /// Check if a player name exactly matches a known user account in the database.
-        /// Returns true only if there's an exact match (case-insensitive) with NickName or BattleTag.
+        /// Returns true only if there's an exact match (case-insensitive) with NickName, BattleTag, or name prefix.
         /// </summary>
         public bool IsKnownUserAccount(string playerName)
         {
@@ -630,6 +630,7 @@ namespace BarcodeRevealTool.Replay
                 return false;
 
             var normalized = NormalizeTag(playerName);
+            var namePrefix = GetTagPrefix(normalized); // e.g., "Ignacy" from "Ignacy#236"
 
             try
             {
@@ -647,12 +648,22 @@ namespace BarcodeRevealTool.Replay
 
                     var normalizedNick = NormalizeTag(rawNick);
                     var normalizedTag = NormalizeTag(rawTag);
+                    var nickPrefix = GetTagPrefix(normalizedNick);
+                    var tagPrefix = GetTagPrefix(normalizedTag);
 
-                    // Exact match (case-insensitive) on either NickName or BattleTag
-                    if (normalized.Equals(normalizedNick, StringComparison.OrdinalIgnoreCase) ||
-                        normalized.Equals(normalizedTag, StringComparison.OrdinalIgnoreCase))
+                    // Exact match (case-insensitive) on BattleTag (full tag with realm)
+                    if (normalized.Equals(normalizedTag, StringComparison.OrdinalIgnoreCase))
                     {
-                        System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.IsKnownUserAccount] '{playerName}' is a known user account (matches '{normalizedNick}')");
+                        System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.IsKnownUserAccount] '{playerName}' is a known user account (BattleTag match: '{normalizedTag}')");
+                        return true;
+                    }
+
+                    // Match by name prefix - if the input is "Ignacy#236" and we have "Ignacy" as NickName
+                    // OR if input is "Ignacy" and we have "Ignacy#236" as BattleTag
+                    if (namePrefix.Equals(normalizedNick, StringComparison.OrdinalIgnoreCase) ||
+                        namePrefix.Equals(nickPrefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.IsKnownUserAccount] '{playerName}' is a known user account (prefix match: '{normalizedNick}' from BattleTag '{normalizedTag}')");
                         return true;
                     }
                 }
