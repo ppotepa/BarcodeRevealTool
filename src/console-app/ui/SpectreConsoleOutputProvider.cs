@@ -53,22 +53,22 @@ namespace BarcodeRevealTool.UI.Console
 
         public void RenderCacheComplete()
         {
-            AnsiConsole.MarkupLine("\n[green]✓[/] [green]Cache population complete.[/]");
+            AnsiConsole.MarkupLine("\n[green][+][/] [green]Cache population complete.[/]");
         }
 
         public void RenderSyncComplete(int newReplays)
         {
-            AnsiConsole.MarkupLine($"[green]✓[/] [green]Synced {newReplays} new replays from disk.[/]");
+            AnsiConsole.MarkupLine($"[green][+][/] [green]Synced {newReplays} new replays from disk.[/]");
         }
 
         public void RenderWarning(string message)
         {
-            AnsiConsole.MarkupLine($"[yellow]⚠[/] [yellow]{EscapeMarkup(message)}[/]");
+            AnsiConsole.MarkupLine($"[yellow]![/] [yellow]{EscapeMarkup(message)}[/]");
         }
 
         public void RenderError(string message)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] [red]{EscapeMarkup(message)}[/]");
+            AnsiConsole.MarkupLine($"[red][-][/] [red]{EscapeMarkup(message)}[/]");
         }
 
         public void HandlePeriodicStateUpdate(string state, ISoloGameLobby? lobby)

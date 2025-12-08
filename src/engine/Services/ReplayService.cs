@@ -263,7 +263,7 @@ namespace BarcodeRevealTool.Services
                     System.Diagnostics.Debug.WriteLine($"[ReplayService] Saving metadata to database");
                     database.CacheMetadata(metadata);
                     System.Diagnostics.Debug.WriteLine($"[ReplayService] Replay saved successfully");
-                    _outputProvider.RenderWarning($"✓ Saved replay: {Path.GetFileName(replayFilePath)}");
+                    _outputProvider.RenderWarning($"[+] Saved replay: {Path.GetFileName(replayFilePath)}");
                 }
                 else
                 {
