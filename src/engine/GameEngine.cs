@@ -132,16 +132,16 @@ namespace BarcodeRevealTool.Engine
         {
             _outputProvider.Clear();
 
-            if (CurrentState == ToolState.Awaiting)
+            bool sc2IsRunning = _gameStateManager.IsStarCraft2Running();
+
+            if (!sc2IsRunning)
             {
-                if (_gameStateManager.IsGameRunning)
-                {
-                    _outputProvider.RenderWarning("StarCraft II is running but no match detected yet. Waiting for match...");
-                }
-                else
-                {
-                    _outputProvider.RenderAwaitingState();
-                }
+                _outputProvider.RenderAwaitingState();
+                _outputProvider.RenderWarning("SC2 process not found. Please start StarCraft II.");
+            }
+            else if (CurrentState == ToolState.Awaiting)
+            {
+                _outputProvider.RenderWarning("SC2 process detected. Scanning for lobby...");
             }
             else if (CurrentState == ToolState.InGame)
             {
@@ -151,7 +151,7 @@ namespace BarcodeRevealTool.Engine
                 }
                 else
                 {
-                    _outputProvider.RenderError("Game detected but lobby data not yet loaded. Please wait...");
+                    _outputProvider.RenderWarning("Match in progress. Loading lobby data...");
                 }
             }
         }
@@ -193,13 +193,15 @@ namespace BarcodeRevealTool.Engine
             {
                 try
                 {
-                    bool lobbyFileExists = File.Exists(LobbyFilePath);
+                    // Only check for lobby if SC2 process is running
+                    bool sc2IsRunning = _gameStateManager.IsStarCraft2Running();
+                    bool lobbyFileExists = sc2IsRunning && File.Exists(LobbyFilePath);
                     
                     // Update game process state (fires events if state changed)
                     _gameStateManager.UpdateGameProcessState(lobbyFileExists);
                     
                     ToolState newState = lobbyFileExists ? ToolState.InGame : ToolState.Awaiting;
-                    System.Diagnostics.Debug.WriteLine($"[GameEngine] State check: {newState}, LobbyFileExists: {lobbyFileExists}");
+                    System.Diagnostics.Debug.WriteLine($"[GameEngine] State check: {newState}, SC2Running: {sc2IsRunning}, LobbyFileExists: {lobbyFileExists}");
 
                     // State change detected
                     if (newState != CurrentState)
@@ -209,15 +211,15 @@ namespace BarcodeRevealTool.Engine
 
                         if (CurrentState == ToolState.InGame)
                         {
-                            System.Diagnostics.Debug.WriteLine($"[GameEngine] Game detected, syncing replays and processing lobby");
-                            // Entering game: sync any new replays (to get opponent history)
+                            System.Diagnostics.Debug.WriteLine($"[GameEngine] Match detected, syncing replays and processing lobby");
+                            // Entering match: sync any new replays (to get opponent history)
                             await SyncReplaysFromDiskAsync();
                             await ProcessLobbyAsync();
                         }
                         else
                         {
-                            System.Diagnostics.Debug.WriteLine($"[GameEngine] Game exited, saving replay");
-                            // Exiting game: save the replay that just finished
+                            System.Diagnostics.Debug.WriteLine($"[GameEngine] Match exited, saving replay");
+                            // Exiting match: save the replay that just finished
                             await OnExitingGameAsync();
                             DisplayCurrentState();
                         }
@@ -264,12 +266,11 @@ namespace BarcodeRevealTool.Engine
                     {
                         if (isRunning)
                         {
-                            System.Diagnostics.Debug.WriteLine($"[SC2Monitor] StarCraft II process detected (32-bit or 64-bit)");
-                            _outputProvider.RenderWarning("StarCraft II process detected");
+                            System.Diagnostics.Debug.WriteLine($"[SC2Monitor] StarCraft II process detected (SC2.exe or SC2_x64.exe)");
                         }
                         else
                         {
-                            System.Diagnostics.Debug.WriteLine($"[SC2Monitor] StarCraft II process no longer running");
+                            System.Diagnostics.Debug.WriteLine($"[SC2Monitor] StarCraft II process terminated");
                         }
                         wasRunningLastCheck = isRunning;
                     }
