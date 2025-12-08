@@ -408,6 +408,44 @@ namespace BarcodeRevealTool.Replay
         }
 
         /// <summary>
+        /// Get all cached replay records (minimal data - just ID and filepath for cache management).
+        /// Used by CacheManager to load all cached files into memory for efficient diff operations.
+        /// </summary>
+        public List<ReplayRecord> GetAllCachedReplays()
+        {
+            var replays = new List<ReplayRecord>();
+
+            try
+            {
+                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+                connection.Open();
+
+                using var command = connection.CreateCommand();
+                command.CommandText = @"
+                    SELECT Id, ReplayFilePath
+                    FROM Replays
+                    ORDER BY CreatedAt DESC
+                ";
+
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    replays.Add(new ReplayRecord
+                    {
+                        Id = Convert.ToInt64(reader["Id"]),
+                        ReplayFilePath = reader["ReplayFilePath"].ToString() ?? string.Empty
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                // Console.WriteLine($"Error retrieving all cached replays: {ex.Message}");
+            }
+
+            return replays;
+        }
+
+        /// <summary>
         /// Get database statistics.
         /// </summary>
         public (int Total, int WithBuildOrder) GetDatabaseStats()

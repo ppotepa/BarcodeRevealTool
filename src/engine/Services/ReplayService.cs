@@ -13,6 +13,7 @@ namespace BarcodeRevealTool.Services
         private readonly IOutputProvider _outputProvider;
         private readonly IConfiguration _configuration;
         private string CacheLockFile => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.lock");
+        private CacheManager _cacheManager = new();
 
         public Action? OnCacheOperationComplete { get; set; }
 
@@ -28,13 +29,22 @@ namespace BarcodeRevealTool.Services
             // Check if cache has already been built
             if (File.Exists(CacheLockFile))
             {
-                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache lock file exists, cache is already initialized");
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache lock file exists, loading cached replays into memory");
                 BuildOrderReader.InitializeCache();
+                
+                // Load all cached replays into memory for efficient sync
+                var database = BuildOrderReader.GetDatabase();
+                if (database != null)
+                {
+                    _cacheManager.LoadCachedFilePaths(database);
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Loaded {_cacheManager.CachedFileCount} cached replays into memory");
+                }
+                
                 await SyncReplaysFromDiskAsync();
                 return;
             }
 
-            System.Diagnostics.Debug.WriteLine($"[ReplayService] No cache lock file found, initializing cache");
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] No cache lock file found, initializing cache from scratch");
             _outputProvider.RenderCacheInitializingMessage();
 
             // Initialize the cache/database (creates replays.db if needed)
@@ -69,7 +79,7 @@ namespace BarcodeRevealTool.Services
                     var lockObj = new object();
 
                     // Scan ALL replays to build complete cache on first startup
-                    // (no database checks - we're building from scratch)
+                    // No database checks - we're building from scratch into empty database
                     foreach (var replayFile in replayFiles)
                     {
                         await semaphore.WaitAsync();
@@ -82,7 +92,23 @@ namespace BarcodeRevealTool.Services
 
                                 if (metadata != null && database != null)
                                 {
-                                    database.CacheMetadata(metadata);
+                                    // Direct insert - skip CacheMetadata's GetReplayByFilePath check
+                                    // since database is empty on first run
+                                    database.AddOrUpdateReplay(
+                                        metadata.Players.Count > 0 ? metadata.Players[0].Name : string.Empty,
+                                        metadata.Players.Count > 1 ? metadata.Players[1].Name : string.Empty,
+                                        !string.IsNullOrEmpty(metadata.Map) ? metadata.Map : "Unknown",
+                                        metadata.Players.Count > 0 ? metadata.Players[0].Race : string.Empty,
+                                        metadata.Players.Count > 1 ? metadata.Players[1].Race : string.Empty,
+                                        metadata.GameDate,
+                                        metadata.FilePath,
+                                        metadata.SC2ClientVersion,
+                                        metadata.Players.Count > 0 ? metadata.Players[0].PlayerId : null,
+                                        metadata.Players.Count > 1 ? metadata.Players[1].PlayerId : null
+                                    );
+                                    
+                                    // Add to in-memory cache
+                                    _cacheManager.AddCachedFile(metadata.FilePath);
                                 }
 
                                 lock (lockObj)
@@ -135,12 +161,12 @@ namespace BarcodeRevealTool.Services
                 ? SearchOption.AllDirectories
                 : SearchOption.TopDirectoryOnly;
 
-            var replayFiles = Directory.GetFiles(
+            var allReplayFiles = Directory.GetFiles(
                 appSettings.Replays.Folder,
                 "*.SC2Replay",
                 searchOption);
 
-            System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {replayFiles.Length} replay files");
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {allReplayFiles.Length} replay files on disk");
             var database = BuildOrderReader.GetDatabase();
             if (database == null)
             {
@@ -148,13 +174,22 @@ namespace BarcodeRevealTool.Services
                 return;
             }
 
-            // Show sync progress message
-            if (replayFiles.Length > 0)
+            // Get list of NEW replay files (on disk but not in cache)
+            var newReplayFiles = _cacheManager.GetNewReplayFiles(allReplayFiles);
+            
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {newReplayFiles.Count} new replay files to add");
+
+            if (newReplayFiles.Count == 0)
             {
-                _outputProvider.RenderCacheSyncMessage();
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache is up to date, no new replays");
+                OnCacheOperationComplete?.Invoke();
+                return;
             }
 
-            // Use parallel processing with bounded concurrency (4 concurrent decoders)
+            // Show sync progress message
+            _outputProvider.RenderCacheSyncMessage();
+
+            // Use parallel processing with bounded concurrency
             int maxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2);
             var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
             var tasks = new List<Task>();
@@ -162,34 +197,34 @@ namespace BarcodeRevealTool.Services
             int newReplaysAdded = 0;
             var lockObj = new object();
 
-            // Check each replay file in parallel
-            // IMPORTANT: Check database FIRST before expensive file decode
-            foreach (var replayFile in replayFiles)
+            // Process only NEW replay files (skip all cached ones)
+            foreach (var replayFile in newReplayFiles)
             {
-                // Skip if already cached (fast DB check before decode)
-                if (database.GetReplayByFilePath(replayFile) != null)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Skipping cached replay: {Path.GetFileName(replayFile)}");
-                    lock (lockObj)
-                    {
-                        processedCount++;
-                        _outputProvider.RenderCacheProgress(processedCount, replayFiles.Length);
-                    }
-                    continue;
-                }
-
-                System.Diagnostics.Debug.WriteLine($"[ReplayService] Processing new replay: {Path.GetFileName(replayFile)}");
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Queuing new replay: {Path.GetFileName(replayFile)}");
                 await semaphore.WaitAsync();
                 tasks.Add(Task.Run(async () =>
                 {
                     try
                     {
-                        // Only decode if NOT already in database
                         var metadata = BuildOrderReader.GetReplayMetadataFast(replayFile);
-                        if (metadata != null)
+                        if (metadata != null && database != null)
                         {
-                            database.CacheMetadata(metadata);
+                            database.AddOrUpdateReplay(
+                                metadata.Players.Count > 0 ? metadata.Players[0].Name : string.Empty,
+                                metadata.Players.Count > 1 ? metadata.Players[1].Name : string.Empty,
+                                !string.IsNullOrEmpty(metadata.Map) ? metadata.Map : "Unknown",
+                                metadata.Players.Count > 0 ? metadata.Players[0].Race : string.Empty,
+                                metadata.Players.Count > 1 ? metadata.Players[1].Race : string.Empty,
+                                metadata.GameDate,
+                                metadata.FilePath,
+                                metadata.SC2ClientVersion,
+                                metadata.Players.Count > 0 ? metadata.Players[0].PlayerId : null,
+                                metadata.Players.Count > 1 ? metadata.Players[1].PlayerId : null
+                            );
+                            
+                            _cacheManager.AddCachedFile(metadata.FilePath);
                             System.Diagnostics.Debug.WriteLine($"[ReplayService] Replay added to cache: {Path.GetFileName(replayFile)}");
+                            
                             lock (lockObj)
                             {
                                 newReplaysAdded++;
@@ -206,7 +241,7 @@ namespace BarcodeRevealTool.Services
                         lock (lockObj)
                         {
                             processedCount++;
-                            _outputProvider.RenderCacheProgress(processedCount, replayFiles.Length);
+                            _outputProvider.RenderCacheProgress(processedCount, newReplayFiles.Count);
                         }
                         semaphore.Release();
                     }
@@ -214,12 +249,17 @@ namespace BarcodeRevealTool.Services
             }
 
             // Wait for all tasks to complete
-            await Task.WhenAll(tasks);
+            if (tasks.Count > 0)
+            {
+                await Task.WhenAll(tasks);
+            }
 
             if (newReplaysAdded > 0)
             {
                 _outputProvider.RenderSyncComplete(newReplaysAdded);
             }
+
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] Sync complete, added {newReplaysAdded} new replays");
 
             // Notify that cache operation is complete so UI can refresh
             OnCacheOperationComplete?.Invoke();

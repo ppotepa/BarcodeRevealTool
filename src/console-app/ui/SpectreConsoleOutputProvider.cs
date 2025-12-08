@@ -1,7 +1,6 @@
-using BarcodeRevealTool.Engine;
 using BarcodeRevealTool.Engine.Abstractions;
-using BarcodeRevealTool.Game;
 using BarcodeRevealTool.game.lobbies;
+using BarcodeRevealTool.Game;
 using Sc2Pulse.Models;
 using Spectre.Console;
 
@@ -151,6 +150,11 @@ namespace BarcodeRevealTool.UI.Console
             if (stats.CurrentStats?.GamesPlayed > 0)
             {
                 table.AddRow("Games Played", $"[yellow]{stats.CurrentStats.GamesPlayed}[/]");
+            }
+
+            if (stats.Members.Character.Id > 0)
+            {
+                table.AddRow("User Id", $"[yellow]{stats.Members.Character.Id}[/]");
             }
 
             AnsiConsole.Write(table);
