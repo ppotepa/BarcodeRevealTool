@@ -88,25 +88,23 @@ namespace BarcodeRevealTool.Engine
             _cancellationTokenSource = new CancellationTokenSource();
             var token = _cancellationTokenSource.Token;
 
-            // Start cache initialization in background (don't block on it)
-            // This allows the app to become responsive immediately
-            var cacheInitTask = Task.Run(async () =>
+            // PHASE 1: Cache Initialization - MUST complete before any game state monitoring
+            // This ensures clean state and prevents interference from game events during loading
+            if (!_cacheInitialized)
             {
-                if (!_cacheInitialized)
-                {
-                    await InitializeCacheAsync();
-                    _cacheInitialized = true;
-                }
-            }, token);
+                await InitializeCacheAsync();
+                _cacheInitialized = true;
+            }
 
-            // Start background monitoring thread immediately
+            // Display state after cache is ready
+            DisplayCurrentState();
+
+            // PHASE 2: Start background monitoring threads only after cache is ready
+            // Start main game state monitoring thread
             _monitoringTask = MonitorGameStateAsync(token);
 
             // Start SC2 process monitor in background
             var sc2MonitorTask = MonitorSc2ProcessAsync(token);
-
-            // Display initial state
-            DisplayCurrentState();
 
             // Wait for cancellation
             try
