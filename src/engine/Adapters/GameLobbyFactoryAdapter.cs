@@ -19,11 +19,20 @@ namespace BarcodeRevealTool.Adapters
 
         public ISoloGameLobby? CreateLobby(byte[] lobbyData, IConfiguration configuration)
         {
-            var appSettings = new AppSettings();
-            configuration.GetSection("barcodeReveal").Bind(appSettings);
+            try
+            {
+                var appSettings = new AppSettings();
+                configuration.GetSection("barcodeReveal").Bind(appSettings);
 
-            var lobby = _gameLobbyFactory.CreateLobby(lobbyData, appSettings);
-            return lobby as ISoloGameLobby;
+                var lobby = _gameLobbyFactory.CreateLobby(lobbyData, appSettings);
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactoryAdapter] Lobby created successfully: {lobby}");
+                return lobby as ISoloGameLobby;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactoryAdapter] Exception in CreateLobby: {ex}");
+                throw;
+            }
         }
     }
 }
