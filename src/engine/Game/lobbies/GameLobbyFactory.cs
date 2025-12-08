@@ -11,6 +11,12 @@ namespace BarcodeRevealTool.Game
     public class GameLobbyFactory
     {
         private static readonly Regex PlayerNamePattern = new("(?<name>[A-Za-z][A-Za-z0-9]{2,20}#[0-9]{3,6})");
+        private readonly ReplayDatabase? _database;
+
+        public GameLobbyFactory(ReplayDatabase? database = null)
+        {
+            _database = database;
+        }
 
         public IGameLobby CreateLobby(byte[] bytes, AppSettings? configuration)
         {
@@ -187,7 +193,7 @@ namespace BarcodeRevealTool.Game
         private Team FindTeam(Team? team1, Team? team2, string userBattleTag, bool isUsers)
         {
             System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: checking which lobby player is a known user account");
-            
+
             if (team1 == null || team2 == null)
             {
                 System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: team1 or team2 is null, using fallback");
@@ -211,8 +217,9 @@ namespace BarcodeRevealTool.Game
 
             try
             {
-                var database = new ReplayDatabase();
-                
+                // Use injected database or create new one
+                var database = _database ?? new ReplayDatabase();
+
                 // Check if either lobby player is a known user account (exact match)
                 bool player1IsUser = database.IsKnownUserAccount(player1Name);
                 bool player2IsUser = database.IsKnownUserAccount(player2Name);

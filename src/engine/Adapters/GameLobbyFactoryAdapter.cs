@@ -2,6 +2,7 @@ using BarcodeRevealTool.Engine;
 using BarcodeRevealTool.Engine.Abstractions;
 using BarcodeRevealTool.Game;
 using BarcodeRevealTool.game.lobbies;
+using BarcodeRevealTool.Replay;
 using Microsoft.Extensions.Configuration;
 
 namespace BarcodeRevealTool.Adapters
@@ -12,10 +13,12 @@ namespace BarcodeRevealTool.Adapters
     public class GameLobbyFactoryAdapter : IGameLobbyFactory
     {
         private readonly GameLobbyFactory _gameLobbyFactory;
+        private readonly ReplayDatabase _database;
 
         public GameLobbyFactoryAdapter()
         {
-            _gameLobbyFactory = new GameLobbyFactory();
+            _database = new ReplayDatabase();
+            _gameLobbyFactory = new GameLobbyFactory(_database);
         }
 
         public ISoloGameLobby? CreateLobby(byte[] lobbyData, IConfiguration configuration)

@@ -328,7 +328,7 @@ namespace BarcodeRevealTool.Replay
                 {
                     ReplayId = replayId,
                     PlayerId = entry.PlayerId,
-                        TimeSeconds = entry.TimeSeconds,
+                    TimeSeconds = entry.TimeSeconds,
                     Kind = entry.Kind,
                     Name = entry.Name
                 }).ToList();
