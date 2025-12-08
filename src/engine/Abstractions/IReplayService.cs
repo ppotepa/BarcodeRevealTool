@@ -19,5 +19,12 @@ namespace BarcodeRevealTool.Engine.Abstractions
         /// Used when exiting a game to save the just-played replay.
         /// </summary>
         Task SaveReplayToDbAsync(string replayFilePath);
+        
+        /// <summary>
+        /// Get match history against a specific opponent.
+        /// Returns list of (opponentName, gameDate, map, yourRace, opponentRace, replayFileName)
+        /// </summary>
+        List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName)> 
+            GetOpponentMatchHistory(string yourPlayerName, string opponentName, int limit = 10);
     }
 }

@@ -196,6 +196,41 @@ namespace BarcodeRevealTool.UI.Console
             };
         }
 
+        public void RenderOpponentMatchHistory(List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName)> history)
+        {
+            if (history == null || history.Count == 0)
+            {
+                AnsiConsole.MarkupLine("[grey]No match history found against this opponent[/]");
+                return;
+            }
+
+            AnsiConsole.MarkupLine("[bold cyan]Match History[/]");
+
+            var table = new Table();
+            table.Border = TableBorder.Square;
+            table.AddColumn("[cyan]Days Ago[/]");
+            table.AddColumn("[cyan]Map[/]");
+            table.AddColumn("[cyan]Your Race[/]");
+            table.AddColumn("[cyan]Opponent Race[/]");
+            table.AddColumn("[cyan]Replay File[/]");
+
+            foreach (var (opponentName, gameDate, map, yourRace, opponentRace, replayFileName) in history)
+            {
+                var daysAgo = (int)(DateTime.Now - gameDate).TotalDays;
+                var daysAgoStr = daysAgo == 0 ? "Today" : daysAgo == 1 ? "Yesterday" : $"{daysAgo}d ago";
+
+                table.AddRow(
+                    $"[yellow]{daysAgoStr}[/]",
+                    EscapeMarkup(map),
+                    $"[green]{EscapeMarkup(yourRace)}[/]",
+                    $"[magenta]{EscapeMarkup(opponentRace)}[/]",
+                    $"[cyan]{EscapeMarkup(Path.GetFileNameWithoutExtension(replayFileName))}[/]"
+                );
+            }
+
+            AnsiConsole.Write(table);
+        }
+
         private static string EscapeMarkup(string? text)
         {
             if (string.IsNullOrEmpty(text))

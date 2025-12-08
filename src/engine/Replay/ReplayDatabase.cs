@@ -340,6 +340,72 @@ namespace BarcodeRevealTool.Replay
         }
 
         /// <summary>
+        /// Get match history against a specific opponent (in reverse chronological order).
+        /// </summary>
+        public List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName)>
+            GetOpponentMatchHistory(string yourPlayerName, string opponentName, int limit = 10)
+        {
+            var history = new List<(string, DateTime, string, string, string, string)>();
+
+            try
+            {
+                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+                connection.Open();
+
+                using var command = connection.CreateCommand();
+                command.CommandText = @"
+                    SELECT Player1, Player2, Map, Race1, Race2, GameDate, ReplayFilePath
+                    FROM Replays
+                    WHERE (Player1 LIKE @YourName AND Player2 LIKE @OpponentName)
+                       OR (Player2 LIKE @YourName AND Player1 LIKE @OpponentName)
+                    ORDER BY GameDate DESC
+                    LIMIT @Limit
+                ";
+                command.Parameters.AddWithValue("@YourName", $"%{yourPlayerName}%");
+                command.Parameters.AddWithValue("@OpponentName", $"%{opponentName}%");
+                command.Parameters.AddWithValue("@Limit", limit);
+
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    var player1 = reader["Player1"].ToString() ?? string.Empty;
+                    var player2 = reader["Player2"].ToString() ?? string.Empty;
+                    var race1 = reader["Race1"].ToString() ?? string.Empty;
+                    var race2 = reader["Race2"].ToString() ?? string.Empty;
+                    var gameDate = DateTime.Parse(reader["GameDate"].ToString() ?? DateTime.MinValue.ToString("O"));
+                    var map = reader["Map"].ToString() ?? string.Empty;
+                    var replayPath = reader["ReplayFilePath"].ToString() ?? string.Empty;
+
+                    // Determine which player is "you" and which is opponent
+                    string yourRace, opponentRaceInMatch, opponentInMatch;
+
+                    if (player1.Contains(yourPlayerName))
+                    {
+                        yourRace = race1;
+                        opponentRaceInMatch = race2;
+                        opponentInMatch = player2;
+                    }
+                    else
+                    {
+                        yourRace = race2;
+                        opponentRaceInMatch = race1;
+                        opponentInMatch = player1;
+                    }
+
+                    var replayFileName = Path.GetFileName(replayPath);
+
+                    history.Add((opponentInMatch, gameDate, map, yourRace, opponentRaceInMatch, replayFileName));
+                }
+            }
+            catch (Exception ex)
+            {
+                // Console.WriteLine($"Error retrieving opponent match history: {ex.Message}");
+            }
+
+            return history;
+        }
+
+        /// <summary>
         /// Get database statistics.
         /// </summary>
         public (int Total, int WithBuildOrder) GetDatabaseStats()

@@ -276,5 +276,20 @@ namespace BarcodeRevealTool.Services
                 _outputProvider.RenderWarning($"Failed to save replay: {ex.Message}");
             }
         }
+
+        public List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName)> 
+            GetOpponentMatchHistory(string yourPlayerName, string opponentName, int limit = 10)
+        {
+            try
+            {
+                var database = new ReplayDatabase();
+                return database.GetOpponentMatchHistory(yourPlayerName, opponentName, limit);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Error getting opponent match history: {ex}");
+                return new List<(string, DateTime, string, string, string, string)>();
+            }
+        }
     }
 }
