@@ -28,7 +28,7 @@ namespace BarcodeRevealTool.Game
 
                 var userBattleTag = configuration?.User.BattleTag ?? string.Empty;
                 System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] User battle tag: {userBattleTag}");
-                
+
                 var usersTeam = FindTeam(team1, team2, userBattleTag, isUsers: true);
                 var oppositeTeam = FindTeam(team1, team2, userBattleTag, isUsers: false);
 
@@ -149,9 +149,21 @@ namespace BarcodeRevealTool.Game
         private Team FindTeam(Team? team1, Team? team2, string userBattleTag, bool isUsers)
         {
             var hasUser = (Team? team) => team?.Players.Any(p => p.Tag == userBattleTag) ?? false;
-            
+
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: team1Tag={team1?.Players.FirstOrDefault()?.Tag}, team2Tag={team2?.Players.FirstOrDefault()?.Tag}, userBattleTag={userBattleTag}");
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: team1HasUser={hasUser(team1)}, team2HasUser={hasUser(team2)}");
+
             var userTeam = hasUser(team1) ? team1 : team2;
-            return isUsers ? userTeam! : (userTeam == team1 ? team2 : team1)!;
+            var result = isUsers ? userTeam : (userTeam == team1 ? team2 : team1);
+            
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam returning: {result?.Players.FirstOrDefault()?.Tag} (isUsers={isUsers})");
+            
+            if (result == null)
+            {
+                throw new InvalidOperationException($"Could not find appropriate team for user {userBattleTag}");
+            }
+            
+            return result;
         }
     }
 }
