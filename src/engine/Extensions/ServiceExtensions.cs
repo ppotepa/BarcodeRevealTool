@@ -1,7 +1,9 @@
 using BarcodeRevealTool.Adapters;
+using BarcodeRevealTool.Engine;
 using BarcodeRevealTool.Engine.Abstractions;
 using BarcodeRevealTool.Engine.Replay;
 using BarcodeRevealTool.Game;
+using BarcodeRevealTool.Game.Lobbies.Strategies;
 using BarcodeRevealTool.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -27,6 +29,10 @@ namespace BarcodeRevealTool.Engine.Extensions
                 config.GetSection("barcodeReveal").Bind(appSettings);
                 return appSettings;
             });
+
+            // User identification strategy
+            services.AddSingleton<IUserIdentificationStrategy>(sp =>
+                new ConfigBasedUserStrategy(sp.GetRequiredService<AppSettings>()));
 
             // Core engine
             services.AddScoped<GameEngine>();

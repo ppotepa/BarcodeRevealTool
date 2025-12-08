@@ -46,8 +46,10 @@ CREATE TABLE IF NOT EXISTS Opponents (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     Name TEXT NOT NULL UNIQUE,
     DisplayName TEXT NOT NULL,
+    NickName TEXT NOT NULL DEFAULT '',
     ToonHandle TEXT,
     BattleTag TEXT NOT NULL,
+    NormalizedBattleTag TEXT NOT NULL DEFAULT '',
     FirstSeen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     LastSeen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -81,8 +83,10 @@ CREATE INDEX IF NOT EXISTS idx_BuildOrderEntries_ReplayId ON BuildOrderEntries(R
 CREATE INDEX IF NOT EXISTS idx_BuildOrderEntries_PlayerId ON BuildOrderEntries(PlayerId);
 CREATE INDEX IF NOT EXISTS idx_Opponents_Name ON Opponents(Name);
 CREATE INDEX IF NOT EXISTS idx_Opponents_DisplayName ON Opponents(DisplayName);
+CREATE INDEX IF NOT EXISTS idx_Opponents_NickName ON Opponents(NickName);
 CREATE INDEX IF NOT EXISTS idx_Opponents_ToonHandle ON Opponents(ToonHandle);
 CREATE INDEX IF NOT EXISTS idx_Opponents_BattleTag ON Opponents(BattleTag);
+CREATE INDEX IF NOT EXISTS idx_Opponents_NormalizedBattleTag ON Opponents(NormalizedBattleTag);
 CREATE INDEX IF NOT EXISTS idx_UserAccounts_ToonHandle ON UserAccounts(ToonHandle);
 CREATE INDEX IF NOT EXISTS idx_UserAccounts_Region ON UserAccounts(Region);
 CREATE INDEX IF NOT EXISTS idx_UserAccounts_NickName ON UserAccounts(NickName);
@@ -92,8 +96,15 @@ ALTER TABLE UserAccounts ADD COLUMN NickName TEXT;
 
 -- Backwards-compatibility for Opponents upgrades
 ALTER TABLE Opponents ADD COLUMN DisplayName TEXT;
+ALTER TABLE Opponents ADD COLUMN NickName TEXT DEFAULT '';
+ALTER TABLE Opponents ADD COLUMN NormalizedBattleTag TEXT DEFAULT '';
 UPDATE Opponents SET DisplayName = COALESCE(DisplayName, Name) WHERE DisplayName IS NULL OR DisplayName = '';
+UPDATE Opponents SET NickName = CASE WHEN NickName IS NULL OR NickName = '' THEN DisplayName ELSE NickName END;
 UPDATE Opponents SET BattleTag = REPLACE(IFNULL(BattleTag, ''), '_', '#');
+UPDATE Opponents SET NormalizedBattleTag = CASE
+    WHEN NormalizedBattleTag IS NULL OR NormalizedBattleTag = '' THEN REPLACE(IFNULL(BattleTag, ''), '_', '#')
+    ELSE NormalizedBattleTag
+END;
 
 -- View for easy player vs player lookups
 CREATE VIEW IF NOT EXISTS ReplaysByPlayers AS

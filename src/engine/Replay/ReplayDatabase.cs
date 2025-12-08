@@ -5,7 +5,6 @@ using System.Linq;
 using SqlKata;
 using SqlKata.Compilers;
 using SqlKata.Execution;
-using BarcodeRevealTool.Engine.Config;
 
 namespace BarcodeRevealTool.Replay
 {
@@ -16,7 +15,6 @@ namespace BarcodeRevealTool.Replay
     {
         private readonly string _databasePath;
         private const string DatabaseFileName = "cache.db";
-        private bool _isRefreshing = false; // Guard against re-entrant calls to RefreshUserAccounts
         private readonly string _connectionString;
 
         public ReplayDatabase(string? customPath = null)
@@ -93,169 +91,7 @@ namespace BarcodeRevealTool.Replay
                     System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Schema statement failed (ignored): {ex.Message}. Statement start: {stmt.Substring(0, Math.Min(200, stmt.Length))}");
                 }
             }
-
-            // Populate UserAccounts table on first startup
-            PopulateUserAccounts();
         }
-
-        /// <summary>
-        /// Populate UserAccounts table with all discovered toon handles from account folder structure.
-        /// This is called once on first database initialization.
-        /// </summary>
-        public void PopulateUserAccounts()
-        {
-            using var queryFactory = CreateQueryFactory();
-
-            // Discover all toon handles and their nick mappings
-            var toonHandles = Engine.Config.AccountToonDiscoveryService.DiscoverAllToonHandles();
-            var nickMapping = Engine.Config.AccountToonDiscoveryService.DiscoverToonNickMapping();
-
-            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Populating UserAccounts with {toonHandles.Count} discovered accounts");
-
-            const string insertSql = @"
-                    INSERT OR IGNORE INTO UserAccounts 
-                    (ToonHandle, NickName, BattleTag, Region, Realm, BattleNetId, DiscoveredAt, UpdatedAt)
-                    VALUES (@ToonHandle, @NickName, @BattleTag, @Region, @Realm, @BattleNetId, @DiscoveredAt, @UpdatedAt)";
-
-            foreach (var toon in toonHandles)
-            {
-                var region = Engine.Config.AccountToonDiscoveryService.ExtractRegion(toon);
-                var realm = Engine.Config.AccountToonDiscoveryService.ExtractRealm(toon);
-                var battleNetId = Engine.Config.AccountToonDiscoveryService.ExtractBattleNetId(toon);
-
-                // Get nick name and discriminator from mapping, or construct battle tag
-                string? nickName = null;
-                string battleTag;
-                if (nickMapping.ContainsKey(toon))
-                {
-                    var (nick, discriminator) = nickMapping[toon];
-                    nickName = nick;
-                    battleTag = $"{nick}#{discriminator}";
-                }
-                else
-                {
-                    // Fallback if nick mapping not found
-                    battleTag = $"Player_{battleNetId}";
-                }
-
-                var parameters = new
-                {
-                    ToonHandle = toon,
-                    NickName = nickName,
-                    BattleTag = battleTag,
-                    Region = region ?? "0",
-                    Realm = realm ?? "0",
-                    BattleNetId = battleNetId ?? "0",
-                    DiscoveredAt = DateTime.UtcNow.ToString("O"),
-                    UpdatedAt = DateTime.UtcNow.ToString("O")
-                };
-
-                try
-                {
-                    queryFactory.Statement(insertSql, parameters);
-                    System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Added UserAccount: {toon} -> {battleTag}");
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Error adding UserAccount {toon}: {ex.Message}");
-                }
-            }
-
-            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Finished populating UserAccounts");
-        }
-
-        /// <summary>
-        /// Refresh the UserAccounts table by checking for new accounts and adding them.
-        /// Does NOT delete existing accounts, only adds new ones discovered.
-        /// Call this after cache initialization to ensure accounts are up-to-date.
-        /// </summary>
-        public void RefreshUserAccounts()
-        {
-            // Guard against re-entrant calls (watcher detecting changes during discovery)
-            if (_isRefreshing)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] RefreshUserAccounts already in progress, skipping re-entrant call");
-                return;
-            }
-
-            _isRefreshing = true;
-            try
-            {
-                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Refreshing UserAccounts table (checking for NEW accounts only)");
-
-                using var queryFactory = CreateQueryFactory();
-
-                // Get currently known toon handles from database
-                var knownHandles = new HashSet<string>(
-                    queryFactory.Query("UserAccounts").Select("ToonHandle").Get<string>(),
-                    StringComparer.OrdinalIgnoreCase);
-
-                // Discover all toon handles from file system
-                var allToonHandles = Engine.Config.AccountToonDiscoveryService.DiscoverAllToonHandles();
-                var nickMapping = Engine.Config.AccountToonDiscoveryService.DiscoverToonNickMapping();
-
-                // Only add NEW toons that aren't already in database
-                var newToons = allToonHandles.Where(t => !knownHandles.Contains(t)).ToList();
-
-                if (newToons.Count == 0)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] No new accounts found");
-                    return;
-                }
-
-                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Found {newToons.Count} new accounts to add");
-
-                foreach (var toon in newToons)
-                {
-                    var region = Engine.Config.AccountToonDiscoveryService.ExtractRegion(toon);
-                    var realm = Engine.Config.AccountToonDiscoveryService.ExtractRealm(toon);
-                    var battleNetId = Engine.Config.AccountToonDiscoveryService.ExtractBattleNetId(toon);
-
-                    // Get nick name and discriminator from mapping, or construct battle tag
-                    string? nickName = null;
-                    string battleTag;
-                    if (nickMapping.ContainsKey(toon))
-                    {
-                        var (nick, discriminator) = nickMapping[toon];
-                        nickName = nick;
-                        battleTag = $"{nick}#{discriminator}";
-                    }
-                    else
-                    {
-                        // Fallback if nick mapping not found
-                        battleTag = $"Player_{battleNetId}";
-                    }
-
-                    try
-                    {
-                        queryFactory.Query("UserAccounts").Insert(new
-                        {
-                            ToonHandle = toon,
-                            NickName = nickName,
-                            BattleTag = battleTag,
-                            Region = region ?? "0",
-                            Realm = realm ?? "0",
-                            BattleNetId = battleNetId ?? "0",
-                            DiscoveredAt = DateTime.UtcNow.ToString("O"),
-                            UpdatedAt = DateTime.UtcNow.ToString("O")
-                        });
-                        System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Added NEW UserAccount: {toon} -> {battleTag}");
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Error adding UserAccount {toon}: {ex.Message}");
-                    }
-                }
-
-                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Finished refreshing UserAccounts ({newToons.Count} new accounts added)");
-            }
-            finally
-            {
-                _isRefreshing = false;
-            }
-        }
-
-        /// <summary>
         /// Add or update a replay record in the database (INSERT ONLY - never deletes).
         /// </summary>
         public long AddOrUpdateReplay(string player1, string player2, string map, string race1, string race2,
@@ -450,42 +286,15 @@ namespace BarcodeRevealTool.Replay
             {
                 using var queryFactory = CreateQueryFactory();
 
-                // Load all known user nicknames from UserAccounts (local user's accounts)
-                // "Nickname" here means full tag: Name#123. We also derive name-only prefixes for matching
-                // against Replays.You/Opponent, which may only contain the name part.
-                var userRows = queryFactory.Query("UserAccounts")
-                    .Select("NickName", "BattleTag")
-                    .Get<dynamic>();
-
-                var userFullTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var userNamePrefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var row in userRows)
-                {
-                    string rawNick = row.NickName?.ToString() ?? string.Empty;
-                    string rawBattleTag = row.BattleTag?.ToString() ?? string.Empty;
-
-                    string normalized = !string.IsNullOrWhiteSpace(rawNick)
-                        ? NormalizeTag(rawNick)
-                        : NormalizeTag(rawBattleTag);
-
-                    if (!string.IsNullOrWhiteSpace(normalized))
-                    {
-                        userFullTags.Add(normalized); // e.g., "Ignacy#236"
-                        var prefix = GetTagPrefix(normalized); // e.g., "Ignacy"
-                        if (!string.IsNullOrWhiteSpace(prefix))
-                        {
-                            userNamePrefixes.Add(prefix);
-                        }
-                    }
-                }
-
-                var normalizedOppTag = NormalizeTag(opponentName);          // "Ignacy#236"
-                var normalizedOppNick = GetTagPrefix(normalizedOppTag);     // "Ignacy"
-                var oppLike = $"%{normalizedOppNick}%";                      // DB stores names, not full tags
+                var normalizedUserTag = NormalizeTag(yourPlayerName);
+                var normalizedUserPrefix = GetTagPrefix(normalizedUserTag);
+                var normalizedOppTag = NormalizeTag(opponentName);
+                var normalizedOppPrefix = GetTagPrefix(normalizedOppTag);
+                var oppLike = $"%{normalizedOppPrefix}%";
 
                 System.Diagnostics.Debug.WriteLine(
                     $"[ReplayDatabase.GetOpponentMatchHistory] yourPlayerName={yourPlayerName}, opponentName={opponentName}, " +
-                    $"limit={limit}, userNicknames=[{string.Join(", ", userFullTags)}], oppLike={oppLike}, normalizedOppTag={normalizedOppTag}, normalizedOppNick={normalizedOppNick}");
+                    $"limit={limit}, normalizedUser={normalizedUserTag}, normalizedOpp={normalizedOppTag}");
 
                 var dbReplays = queryFactory.Query("Replays")
                     .Where(q => q
@@ -504,21 +313,17 @@ namespace BarcodeRevealTool.Replay
                     var map = replay.Map?.ToString() ?? string.Empty;
                     var replayPath = replay.ReplayFilePath?.ToString() ?? string.Empty;
 
-                    // Normalize player names and derive prefixes to match both full tags and plain names
                     var normP1 = NormalizeTag(player1);
                     var normP2 = NormalizeTag(player2);
                     var p1Prefix = GetTagPrefix(normP1);
                     var p2Prefix = GetTagPrefix(normP2);
 
-                    bool p1IsUser = userFullTags.Contains(normP1) || userNamePrefixes.Contains(p1Prefix);
-                    bool p2IsUser = userFullTags.Contains(normP2) || userNamePrefixes.Contains(p2Prefix);
+                    bool p1IsUser = MatchesTagOrPrefix(normP1, p1Prefix, normalizedUserTag, normalizedUserPrefix);
+                    bool p2IsUser = MatchesTagOrPrefix(normP2, p2Prefix, normalizedUserTag, normalizedUserPrefix);
 
-                    bool p1IsOpp = normP1.Equals(normalizedOppTag, StringComparison.OrdinalIgnoreCase) ||
-                                   p1Prefix.Equals(normalizedOppNick, StringComparison.OrdinalIgnoreCase);
-                    bool p2IsOpp = normP2.Equals(normalizedOppTag, StringComparison.OrdinalIgnoreCase) ||
-                                   p2Prefix.Equals(normalizedOppNick, StringComparison.OrdinalIgnoreCase);
+                    bool p1IsOpp = MatchesTagOrPrefix(normP1, p1Prefix, normalizedOppTag, normalizedOppPrefix);
+                    bool p2IsOpp = MatchesTagOrPrefix(normP2, p2Prefix, normalizedOppTag, normalizedOppPrefix);
 
-                    // Determine which player is "you" (any of user's accounts) and which is opponent
                     string yourRace;
                     string opponentRaceInMatch;
                     string opponentInMatch;
@@ -537,7 +342,6 @@ namespace BarcodeRevealTool.Replay
                     }
                     else
                     {
-                        // Skip replays where we can't clearly identify user vs opponent
                         continue;
                     }
 
@@ -561,6 +365,20 @@ namespace BarcodeRevealTool.Replay
             return history;
         }
 
+        private static bool MatchesTagOrPrefix(string normalizedValue, string prefix, string targetTag, string targetPrefix)
+        {
+            if (string.IsNullOrEmpty(targetTag))
+                return false;
+
+            if (string.Equals(normalizedValue, targetTag, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (string.IsNullOrEmpty(prefix) || string.IsNullOrEmpty(targetPrefix))
+                return false;
+
+            return string.Equals(prefix, targetPrefix, StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <summary>
         /// Validates and normalizes a player name against known user accounts.
         /// Tries to find the best matching user account from the database.
@@ -568,114 +386,7 @@ namespace BarcodeRevealTool.Replay
         /// </summary>
         public string ValidateAndNormalizePlayerName(string playerName)
         {
-            if (string.IsNullOrWhiteSpace(playerName))
-                return string.Empty;
-
-            var normalized = NormalizeTag(playerName);
-            var namePrefix = GetTagPrefix(normalized);
-
-            try
-            {
-                using var queryFactory = CreateQueryFactory();
-
-                // Get all known user nicknames and battle tags
-                var userRows = queryFactory.Query("UserAccounts")
-                    .Select("NickName", "BattleTag")
-                    .Get<dynamic>();
-
-                foreach (var row in userRows)
-                {
-                    string rawNick = row.NickName?.ToString() ?? string.Empty;
-                    string rawTag = row.BattleTag?.ToString() ?? string.Empty;
-
-                    var normalizedNick = NormalizeTag(rawNick);
-                    var normalizedTag = NormalizeTag(rawTag);
-
-                    // Exact match on full tag
-                    if (normalized.Equals(normalizedNick, StringComparison.OrdinalIgnoreCase) ||
-                        normalized.Equals(normalizedTag, StringComparison.OrdinalIgnoreCase))
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.ValidateAndNormalizePlayerName] Found exact match for '{playerName}' -> '{normalizedNick}'");
-                        return normalizedNick;
-                    }
-
-                    // Match by name prefix (e.g., "Ignacy" matches "Ignacy#236")
-                    var nickPrefix = GetTagPrefix(normalizedNick);
-                    var tagPrefix = GetTagPrefix(normalizedTag);
-                    if (namePrefix.Equals(nickPrefix, StringComparison.OrdinalIgnoreCase) ||
-                        namePrefix.Equals(tagPrefix, StringComparison.OrdinalIgnoreCase))
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.ValidateAndNormalizePlayerName] Found prefix match for '{playerName}' (prefix: '{namePrefix}') -> '{normalizedNick}'");
-                        return normalizedNick;
-                    }
-                }
-
-                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.ValidateAndNormalizePlayerName] No match found for '{playerName}', returning normalized: '{normalized}'");
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.ValidateAndNormalizePlayerName] Error validating name '{playerName}': {ex.Message}");
-            }
-
-            return normalized;
-        }
-
-        /// <summary>
-        /// Check if a player name exactly matches a known user account in the database.
-        /// Returns true only if there's an exact match (case-insensitive) with NickName, BattleTag, or name prefix.
-        /// </summary>
-        public bool IsKnownUserAccount(string playerName)
-        {
-            if (string.IsNullOrWhiteSpace(playerName))
-                return false;
-
-            var normalized = NormalizeTag(playerName);
-            var namePrefix = GetTagPrefix(normalized); // e.g., "Ignacy" from "Ignacy#236"
-
-            try
-            {
-                using var queryFactory = CreateQueryFactory();
-
-                // Get all known user nicknames and battle tags
-                var userRows = queryFactory.Query("UserAccounts")
-                    .Select("NickName", "BattleTag")
-                    .Get<dynamic>();
-
-                foreach (var row in userRows)
-                {
-                    string rawNick = row.NickName?.ToString() ?? string.Empty;
-                    string rawTag = row.BattleTag?.ToString() ?? string.Empty;
-
-                    var normalizedNick = NormalizeTag(rawNick);
-                    var normalizedTag = NormalizeTag(rawTag);
-                    var nickPrefix = GetTagPrefix(normalizedNick);
-                    var tagPrefix = GetTagPrefix(normalizedTag);
-
-                    // Exact match (case-insensitive) on BattleTag (full tag with realm)
-                    if (normalized.Equals(normalizedTag, StringComparison.OrdinalIgnoreCase))
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.IsKnownUserAccount] '{playerName}' is a known user account (BattleTag match: '{normalizedTag}')");
-                        return true;
-                    }
-
-                    // Match by name prefix - if the input is "Ignacy#236" and we have "Ignacy" as NickName
-                    // OR if input is "Ignacy" and we have "Ignacy#236" as BattleTag
-                    if (namePrefix.Equals(normalizedNick, StringComparison.OrdinalIgnoreCase) ||
-                        namePrefix.Equals(nickPrefix, StringComparison.OrdinalIgnoreCase))
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.IsKnownUserAccount] '{playerName}' is a known user account (prefix match: '{normalizedNick}' from BattleTag '{normalizedTag}')");
-                        return true;
-                    }
-                }
-
-                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.IsKnownUserAccount] '{playerName}' is NOT a known user account");
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.IsKnownUserAccount] Error checking account '{playerName}': {ex.Message}");
-            }
-
-            return false;
+            return NormalizeTag(playerName);
         }
 
         /// <summary>
@@ -1070,27 +781,19 @@ namespace BarcodeRevealTool.Replay
                 return;
 
             string normalizedUserTag = NormalizeTag(userBattleTag);
+            string userPrefix = GetTagPrefix(normalizedUserTag);
             var now = DateTime.UtcNow.ToString("O");
 
             using var queryFactory = CreateQueryFactory();
-            var (knownUserTags, knownUserPrefixes) = LoadKnownUserAccountAliases(queryFactory);
-            if (!string.IsNullOrEmpty(normalizedUserTag))
-            {
-                knownUserTags.Add(normalizedUserTag);
-                var userPrefix = GetTagPrefix(normalizedUserTag);
-                if (!string.IsNullOrEmpty(userPrefix))
-                {
-                    knownUserPrefixes.Add(userPrefix);
-                }
-            }
-
             const string upsertSql = @"
-                    INSERT INTO Opponents (Name, DisplayName, ToonHandle, BattleTag, FirstSeen, LastSeen, UpdatedAt)
-                    VALUES (@Name, @DisplayName, @ToonHandle, @BattleTag, @FirstSeen, @LastSeen, @UpdatedAt)
+                    INSERT INTO Opponents (Name, DisplayName, NickName, ToonHandle, BattleTag, NormalizedBattleTag, FirstSeen, LastSeen, UpdatedAt)
+                    VALUES (@Name, @DisplayName, @NickName, @ToonHandle, @BattleTag, @NormalizedBattleTag, @FirstSeen, @LastSeen, @UpdatedAt)
                     ON CONFLICT(Name) DO UPDATE SET
                         DisplayName = excluded.DisplayName,
+                        NickName = excluded.NickName,
                         ToonHandle = CASE WHEN excluded.ToonHandle != '' THEN excluded.ToonHandle ELSE Opponents.ToonHandle END,
                         BattleTag = CASE WHEN excluded.BattleTag != '' THEN excluded.BattleTag ELSE Opponents.BattleTag END,
+                        NormalizedBattleTag = CASE WHEN excluded.NormalizedBattleTag != '' THEN excluded.NormalizedBattleTag ELSE Opponents.NormalizedBattleTag END,
                         LastSeen = excluded.LastSeen,
                         UpdatedAt = excluded.UpdatedAt;
                 ";
@@ -1106,7 +809,7 @@ namespace BarcodeRevealTool.Replay
                 if (string.IsNullOrWhiteSpace(battleTag))
                     continue;
 
-                if (MatchesKnownUserAccount(normalizedName, battleTag, knownUserTags, knownUserPrefixes))
+                if (MatchesConfiguredUserAccount(normalizedName, battleTag, normalizedUserTag, userPrefix))
                     continue;
 
                 string toonHandle = string.IsNullOrWhiteSpace(player.PlayerId)
@@ -1117,8 +820,10 @@ namespace BarcodeRevealTool.Replay
                 {
                     Name = normalizedName,
                     DisplayName = displayName,
+                    NickName = displayName,
                     ToonHandle = string.IsNullOrWhiteSpace(toonHandle) ? null : toonHandle,
                     BattleTag = battleTag,
+                    NormalizedBattleTag = NormalizeTag(battleTag),
                     FirstSeen = now,
                     LastSeen = now,
                     UpdatedAt = now
@@ -1135,62 +840,34 @@ namespace BarcodeRevealTool.Replay
             }
         }
 
-        private static (HashSet<string> fullTags, HashSet<string> prefixes) LoadKnownUserAccountAliases(QueryFactory queryFactory)
+        private static bool MatchesConfiguredUserAccount(string normalizedName, string normalizedBattleTag,
+            string normalizedUserTag, string normalizedUserPrefix)
         {
-            var tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var prefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrEmpty(normalizedUserTag))
+                return false;
 
-            try
+            if (string.Equals(normalizedName, normalizedUserTag, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalizedBattleTag, normalizedUserTag, StringComparison.OrdinalIgnoreCase))
             {
-                var rows = queryFactory.Query("UserAccounts")
-                    .Select("NickName", "BattleTag")
-                    .Get<dynamic>();
-
-                foreach (var row in rows)
-                {
-                    AddAlias(row.NickName);
-                    AddAlias(row.BattleTag);
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Failed to load user accounts for opponent filtering: {ex.Message}");
-            }
-
-            return (tags, prefixes);
-
-            void AddAlias(object? value)
-            {
-                var normalized = NormalizeTag(value?.ToString());
-                if (string.IsNullOrWhiteSpace(normalized))
-                    return;
-
-                tags.Add(normalized);
-
-                var prefix = GetTagPrefix(normalized);
-                if (!string.IsNullOrEmpty(prefix))
-                {
-                    prefixes.Add(prefix);
-                }
-            }
-        }
-
-        private static bool MatchesKnownUserAccount(string normalizedName, string normalizedBattleTag,
-            HashSet<string> knownUserTags, HashSet<string> knownUserPrefixes)
-        {
-            if (!string.IsNullOrEmpty(normalizedName) && knownUserTags.Contains(normalizedName))
                 return true;
+            }
 
-            if (!string.IsNullOrEmpty(normalizedBattleTag) && knownUserTags.Contains(normalizedBattleTag))
-                return true;
+            if (string.IsNullOrEmpty(normalizedUserPrefix))
+                return false;
 
             var namePrefix = GetTagPrefix(normalizedName);
-            if (!string.IsNullOrEmpty(namePrefix) && knownUserPrefixes.Contains(namePrefix))
+            if (!string.IsNullOrEmpty(namePrefix) &&
+                string.Equals(namePrefix, normalizedUserPrefix, StringComparison.OrdinalIgnoreCase))
+            {
                 return true;
+            }
 
             var battlePrefix = GetTagPrefix(normalizedBattleTag);
-            if (!string.IsNullOrEmpty(battlePrefix) && knownUserPrefixes.Contains(battlePrefix))
+            if (!string.IsNullOrEmpty(battlePrefix) &&
+                string.Equals(battlePrefix, normalizedUserPrefix, StringComparison.OrdinalIgnoreCase))
+            {
                 return true;
+            }
 
             return false;
         }

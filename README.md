@@ -43,6 +43,8 @@ Edit `src/tool/appsettings.json` first:
 }
 ```
 
+**Important:** `user.battleTag` must be filled with your exact Battle.net tag (e.g., `Player#1234`). The tool no longer auto-detects accounts from `.lnk` files.
+
 On first run: scans and caches all replays (~1 minute per 500 replays). Subsequent starts sync new replays only.
 
 ## Code

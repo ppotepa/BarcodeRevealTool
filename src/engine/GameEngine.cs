@@ -2,7 +2,6 @@ using BarcodeRevealTool.Engine.Abstractions;
 using BarcodeRevealTool.Engine.Config;
 using BarcodeRevealTool.game.lobbies;
 using BarcodeRevealTool.Game;
-using Microsoft.Extensions.Configuration;
 using Sc2Pulse;
 
 namespace BarcodeRevealTool.Engine
@@ -33,41 +32,17 @@ namespace BarcodeRevealTool.Engine
         private readonly IOutputProvider _outputProvider;
         private readonly IReplayService _replayService;
         private readonly IGameLobbyFactory _gameLobbyFactory;
-        private readonly IConfiguration _configuration;
+        private readonly AppSettings _appSettings;
         private readonly GameStateManager _gameStateManager = new();
-        private string? _detectedUserAccount = null;  // Auto-detected from SC2 account links
-
-        public GameEngine(IConfiguration configuration, IServiceProvider services, Sc2PulseClient pulseClient, IOutputProvider outputProvider, IReplayService replayService, IGameLobbyFactory gameLobbyFactory)
+        public GameEngine(AppSettings appSettings, IServiceProvider services, Sc2PulseClient pulseClient, IOutputProvider outputProvider, IReplayService replayService, IGameLobbyFactory gameLobbyFactory)
         {
-            _configuration = configuration;
-            configuration.GetSection("barcodeReveal").Bind(Configuration);
+            _appSettings = appSettings ?? throw new ArgumentNullException(nameof(appSettings));
+            Configuration = _appSettings;
             Services = services;
             PulseClient = pulseClient;
             _outputProvider = outputProvider;
             _replayService = replayService;
             _gameLobbyFactory = gameLobbyFactory;
-
-            // Auto-detect user account from SC2 link files if not configured
-            _detectedUserAccount = UserDetectionService.DetectUserAccount();
-            if (!string.IsNullOrEmpty(_detectedUserAccount))
-            {
-                System.Diagnostics.Debug.WriteLine($"[GameEngine] Auto-detected user account: {_detectedUserAccount}");
-                // Override configuration with detected account if not already set
-                if (Configuration?.User == null)
-                {
-                    Configuration ??= new AppSettings();
-                    Configuration.User ??= new User();
-                }
-                if (string.IsNullOrEmpty(Configuration.User.BattleTag))
-                {
-                    Configuration.User.BattleTag = _detectedUserAccount;
-                    System.Diagnostics.Debug.WriteLine($"[GameEngine] Set configuration user account to: {_detectedUserAccount}");
-                }
-            }
-            else
-            {
-                System.Diagnostics.Debug.WriteLine($"[GameEngine] No user account detected from SC2 links");
-            }
 
             // Subscribe to game state changes
             _gameStateManager.GameProcessStateChanged += OnGameProcessStateChanged;
@@ -87,7 +62,7 @@ namespace BarcodeRevealTool.Engine
         public string AppDataLocal
             => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
-        public AppSettings? Configuration { get; private set; } = new();
+        public AppSettings Configuration { get; }
         public ToolState CurrentState
         {
             get => _currentState;
@@ -421,7 +396,7 @@ namespace BarcodeRevealTool.Engine
                 System.Diagnostics.Debug.WriteLine($"[GameEngine] Reading lobby file from {LobbyFilePath}");
                 var lobbyBytes = File.ReadAllBytes(LobbyFilePath);
                 System.Diagnostics.Debug.WriteLine($"[GameEngine] Lobby file size: {lobbyBytes.Length} bytes");
-                var lobby = _gameLobbyFactory.CreateLobby(lobbyBytes, _configuration);
+                var lobby = _gameLobbyFactory.CreateLobby(lobbyBytes, _appSettings);
 
                 if (lobby is not null)
                 {

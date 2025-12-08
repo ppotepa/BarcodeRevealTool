@@ -12,11 +12,13 @@
 // Simple in-memory representation of a build order line
 using BarcodeRevealTool.replay;
 using s2protocol.NET;
+using System.Text.RegularExpressions;
 
 namespace BarcodeRevealTool.Replay
 {
     public static class BuildOrderReader
     {
+        private static readonly Regex BattleTagRegex = new(@"(?i)^(?<name>[A-Za-z0-9]+)[#_](?<code>[0-9]{3,6})$", RegexOptions.Compiled);
         private const string ReplayExtension = "*.SC2Replay";
         private static ReplayDatabase? _database;
 
@@ -74,18 +76,19 @@ namespace BarcodeRevealTool.Replay
                 return null;
 
             // Normalize the search identifier to handle both formats
-            string normalizedIdentifier = NormalizeToonHandle(playerIdentifier);
+            string normalizedIdentifier = NormalizePlayerHandle(playerIdentifier);
+            string normalizedToonHandle = NormalizeToonHandle(playerIdentifier);
 
             // Try exact battle tag match first
             var playerByTag = metadata.Players.FirstOrDefault(p =>
-                p.BattleTag.Equals(playerIdentifier, StringComparison.OrdinalIgnoreCase));
+                NormalizePlayerHandle(p.BattleTag).Equals(normalizedIdentifier, StringComparison.OrdinalIgnoreCase));
 
             if (playerByTag != null)
                 return playerByTag;
 
             // Try normalized toonhandle match
             var playerByNormalizedId = metadata.Players.FirstOrDefault(p =>
-                NormalizeToonHandle(p.PlayerId).Equals(normalizedIdentifier, StringComparison.OrdinalIgnoreCase));
+                NormalizeToonHandle(p.PlayerId).Equals(normalizedToonHandle, StringComparison.OrdinalIgnoreCase));
 
             if (playerByNormalizedId != null)
                 return playerByNormalizedId;
@@ -103,7 +106,7 @@ namespace BarcodeRevealTool.Replay
 
             // Try case-insensitive name or partial match
             return metadata.Players.FirstOrDefault(p =>
-                p.Name.Contains(playerIdentifier, StringComparison.OrdinalIgnoreCase));
+                NormalizePlayerHandle(p.Name).Contains(normalizedIdentifier, StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>
@@ -173,8 +176,8 @@ namespace BarcodeRevealTool.Replay
                     SC2ClientVersion = sc2Version,
                     Players = replay.Details.Players.Select(p => new PlayerInfo
                     {
-                        Name = p.Name ?? string.Empty,
-                        BattleTag = ExtractBattleTag(p.Name),
+                        Name = NormalizePlayerHandle(p.Name),
+                        BattleTag = NormalizePlayerHandle(p.Name),
                         Race = p.Race ?? "Unknown",
                         PlayerId = ExtractPlayerId(p)
                     }).ToList(),
@@ -292,18 +295,21 @@ namespace BarcodeRevealTool.Replay
         /// <summary>
         /// Extract battle tag from player name (format: "Name#12345").
         /// </summary>
-        private static string ExtractBattleTag(string? playerName)
+        private static string ExtractBattleTag(string? playerName) => NormalizePlayerHandle(playerName);
+
+        private static string NormalizePlayerHandle(string? value)
         {
-            if (string.IsNullOrEmpty(playerName))
+            if (string.IsNullOrWhiteSpace(value))
                 return string.Empty;
 
-            var lastHashIndex = playerName.LastIndexOf('#');
-            if (lastHashIndex > 0)
+            var sanitized = value.Trim().Replace('_', '#');
+            var match = BattleTagRegex.Match(sanitized);
+            if (match.Success)
             {
-                return playerName.Substring(lastHashIndex - 1);
+                return $"{match.Groups["name"].Value}#{match.Groups["code"].Value}";
             }
 
-            return playerName;
+            return sanitized;
         }
 
         /// <summary>
@@ -615,8 +621,8 @@ namespace BarcodeRevealTool.Replay
                 SC2ClientVersion = sc2Version,
                 Players = replay.Details?.Players?.Select(p => new PlayerInfo
                 {
-                    Name = p.Name ?? string.Empty,
-                    BattleTag = ExtractBattleTag(p.Name),
+                    Name = NormalizePlayerHandle(p.Name),
+                    BattleTag = NormalizePlayerHandle(p.Name),
                     Race = p.Race ?? "Unknown",
                     PlayerId = ExtractPlayerId(p)
                 }).ToList() ?? new List<PlayerInfo>(),

@@ -1,6 +1,5 @@
 using BarcodeRevealTool.Engine;
 using BarcodeRevealTool.Engine.Abstractions;
-using BarcodeRevealTool.Engine.Config;
 using BarcodeRevealTool.Replay;
 using Microsoft.Extensions.Configuration;
 
@@ -14,7 +13,6 @@ namespace BarcodeRevealTool.Services
     {
         private readonly IOutputProvider _outputProvider;
         private readonly IConfiguration _configuration;
-        private AccountWatcherService? _accountWatcher;
         private bool _initialized = false;
         private string CacheLockFile => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.lock");
         private string CacheValidationFile => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.validation");
@@ -83,10 +81,6 @@ namespace BarcodeRevealTool.Services
                 return;
             }
 
-            // Detect user account from SC2 link files
-            string? userBattleTag = UserDetectionService.DetectUserAccount();
-            System.Diagnostics.Debug.WriteLine($"[ReplayService] Detected user account: {userBattleTag ?? "None"}");
-
             // Initialize database
             BuildOrderReader.InitializeCache();
             var database = BuildOrderReader.GetDatabase();
@@ -98,6 +92,17 @@ namespace BarcodeRevealTool.Services
 
             var appSettings = new AppSettings();
             _configuration.GetSection("barcodeReveal").Bind(appSettings);
+
+            string userBattleTag;
+            try
+            {
+                userBattleTag = EnsureConfiguredBattleTag(appSettings);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _outputProvider.RenderError(ex.Message);
+                return;
+            }
 
             if (appSettings?.Replays?.Folder == null || !Directory.Exists(appSettings.Replays.Folder))
             {
@@ -201,27 +206,6 @@ namespace BarcodeRevealTool.Services
                 }
             }
 
-            // Populate UserAccounts only once during initialization
-            System.Diagnostics.Debug.WriteLine($"[ReplayService] Populating user accounts (first time only)");
-            database.PopulateUserAccounts();
-
-            // Setup account watcher to detect new .lnk files periodically (every 60 seconds)
-            if (_accountWatcher == null)
-            {
-                _accountWatcher = new AccountWatcherService();
-                _accountWatcher.AccountsChanged += (sender, e) =>
-                {
-                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Account watcher detected {e.NewLnkFilesCount} new .lnk file(s), checking for new accounts");
-                    var db = BuildOrderReader.GetDatabase();
-                    if (db != null)
-                    {
-                        db.RefreshUserAccounts();
-                    }
-                };
-                _accountWatcher.StartWatching();
-                System.Diagnostics.Debug.WriteLine($"[ReplayService] Account watcher started (checks every 60 seconds)");
-            }
-
             _initialized = true;
             OnCacheOperationComplete?.Invoke();
         }
@@ -275,6 +259,24 @@ namespace BarcodeRevealTool.Services
             }
         }
 
+        private string EnsureConfiguredBattleTag()
+        {
+            var appSettings = new AppSettings();
+            _configuration.GetSection("barcodeReveal").Bind(appSettings);
+            return EnsureConfiguredBattleTag(appSettings);
+        }
+
+        private static string EnsureConfiguredBattleTag(AppSettings appSettings)
+        {
+            var battleTag = appSettings.User?.BattleTag;
+            if (string.IsNullOrWhiteSpace(battleTag))
+            {
+                throw new InvalidOperationException("Set 'barcodeReveal:user:battleTag' in appsettings.json to identify your account.");
+            }
+
+            return battleTag;
+        }
+
         /// <summary>
         /// Process replays in parallel using optimal system resources.
         /// Loads all replay metadata into memory first for maximum performance.
@@ -325,11 +327,13 @@ namespace BarcodeRevealTool.Services
                             // Determine You vs Opponent based on user battle tag
                             if (!string.IsNullOrEmpty(userBattleTag))
                             {
-                                string normalizedUserTag = userBattleTag.Replace('_', '#').ToLower();
-                                string normalizedPlayer1 = metadata.Players[0].Name?.Replace('_', '#').ToLower() ?? "";
-                                string normalizedPlayer2 = metadata.Players[1].Name?.Replace('_', '#').ToLower() ?? "";
+                                string normalizedUserTag = NormalizeConfiguredBattleTag(userBattleTag);
+                                string normalizedPlayer1 = NormalizeConfiguredBattleTag(metadata.Players[0].BattleTag);
+                                string normalizedPlayer2 = NormalizeConfiguredBattleTag(metadata.Players[1].BattleTag);
 
-                                if (normalizedPlayer1.Contains(normalizedUserTag) || normalizedUserTag.Contains(normalizedPlayer1))
+                                if (!string.IsNullOrEmpty(normalizedPlayer1) &&
+                                    (normalizedPlayer1.Equals(normalizedUserTag, StringComparison.OrdinalIgnoreCase) ||
+                                     normalizedUserTag.Contains(normalizedPlayer1)))
                                 {
                                     yourPlayer = metadata.Players[0].Name;
                                     yourRace = metadata.Players[0].Race;
@@ -338,7 +342,9 @@ namespace BarcodeRevealTool.Services
                                     opponentRace = metadata.Players[1].Race;
                                     opponentPlayerId = metadata.Players[1].PlayerId;
                                 }
-                                else if (normalizedPlayer2.Contains(normalizedUserTag) || normalizedUserTag.Contains(normalizedPlayer2))
+                                else if (!string.IsNullOrEmpty(normalizedPlayer2) &&
+                                         (normalizedPlayer2.Equals(normalizedUserTag, StringComparison.OrdinalIgnoreCase) ||
+                                          normalizedUserTag.Contains(normalizedPlayer2)))
                                 {
                                     yourPlayer = metadata.Players[1].Name;
                                     yourRace = metadata.Players[1].Race;
@@ -491,6 +497,17 @@ namespace BarcodeRevealTool.Services
                 return;
             }
 
+            string userBattleTag;
+            try
+            {
+                userBattleTag = EnsureConfiguredBattleTag();
+            }
+            catch (InvalidOperationException ex)
+            {
+                _outputProvider.RenderError(ex.Message);
+                return;
+            }
+
             // Get all replay files from disk
             var searchOption = (appSettings.Replays.Recursive == true)
                 ? SearchOption.AllDirectories
@@ -524,7 +541,7 @@ namespace BarcodeRevealTool.Services
 
             // Show sync message and process only the missing files
             _outputProvider.RenderCacheSyncMessage();
-            await ProcessReplaysAsync(database, missingFiles.ToArray(), missingFiles.Count);
+            await ProcessReplaysAsync(database, missingFiles.ToArray(), missingFiles.Count, userBattleTag);
             _outputProvider.RenderSyncComplete(missingFiles.Count);
             UpdateCacheValidationTime();
         }        /// <summary>
@@ -563,8 +580,18 @@ namespace BarcodeRevealTool.Services
                 if (metadata != null)
                 {
                     System.Diagnostics.Debug.WriteLine($"[ReplayService] Saving metadata to database");
-                    var detectedUser = UserDetectionService.DetectUserAccount();
-                    database.CacheMetadata(metadata, detectedUser);
+                    string userBattleTag;
+                    try
+                    {
+                        userBattleTag = EnsureConfiguredBattleTag();
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        _outputProvider.RenderError(ex.Message);
+                        return;
+                    }
+
+                    database.CacheMetadata(metadata, userBattleTag);
                     System.Diagnostics.Debug.WriteLine($"[ReplayService] Replay saved successfully");
                     _outputProvider.RenderWarning($"[+] Saved replay: {Path.GetFileName(replayFilePath)}");
                 }
@@ -689,6 +716,13 @@ namespace BarcodeRevealTool.Services
                 System.Diagnostics.Debug.WriteLine($"[ReplayService] Error checking config hash: {ex}");
                 return false; // Don't trigger rescan on error
             }
+        }
+
+        private static string NormalizeConfiguredBattleTag(string? value)
+        {
+            return string.IsNullOrWhiteSpace(value)
+                ? string.Empty
+                : value.Replace('_', '#').Trim().ToLowerInvariant();
         }
     }
 }

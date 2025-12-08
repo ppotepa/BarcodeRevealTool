@@ -1,5 +1,5 @@
+using BarcodeRevealTool.Engine;
 using BarcodeRevealTool.game.lobbies;
-using Microsoft.Extensions.Configuration;
 
 namespace BarcodeRevealTool.Engine.Abstractions
 {
@@ -12,8 +12,8 @@ namespace BarcodeRevealTool.Engine.Abstractions
         /// Creates a game lobby from binary lobby file data
         /// </summary>
         /// <param name="lobbyData">The raw bytes from the lobby.SC2Replay file</param>
-        /// <param name="configuration">The application configuration</param>
+        /// <param name="appSettings">The resolved application settings</param>
         /// <returns>An ISoloGameLobby if successful, null otherwise</returns>
-        ISoloGameLobby? CreateLobby(byte[] lobbyData, IConfiguration configuration);
+        ISoloGameLobby? CreateLobby(byte[] lobbyData, AppSettings appSettings);
     }
 }
