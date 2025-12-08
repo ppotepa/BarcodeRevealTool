@@ -177,9 +177,22 @@ namespace BarcodeRevealTool.Engine
             {
                 if (_cachedLobby is not null)
                 {
-                    // Extract opponent character ID from SC2Pulse data
+                    // Extract opponent toon handle from SC2Pulse data
                     var opponentData = _cachedLobby.AdditionalData as Sc2Pulse.Models.LadderDistinctCharacter;
-                    var opponentCharId = opponentData?.Members?.Character?.Id.ToString();
+                    var opponentCharacter = opponentData?.Members?.Character;
+
+                    // Build toon handle from region, realm, and battle.net ID
+                    // Format: region-S2-realm-battleNetId (e.g., "1-S2-2-1369255")
+                    string? opponentToonHandle = null;
+                    if (opponentCharacter?.Region != null &&
+                        opponentCharacter?.Realm.HasValue == true &&
+                        opponentCharacter?.BattleNetId.HasValue == true)
+                    {
+                        var regionCode = (int)opponentCharacter.Region;
+                        var realm = opponentCharacter.Realm.Value;
+                        var battleNetId = opponentCharacter.BattleNetId.Value;
+                        opponentToonHandle = $"{regionCode}-S2-{realm}-{battleNetId}";
+                    }
 
                     List<(string, string, string, string, DateTime, string)>? opponentGames = null;
                     List<(double, string, string)>? opponentLastBuild = null;
@@ -203,13 +216,28 @@ namespace BarcodeRevealTool.Engine
                         opponentPlayer = oppositeTeam?.Players.FirstOrDefault();
                     }
 
-                    if (!string.IsNullOrEmpty(opponentCharId) && !string.IsNullOrEmpty(ourCharId))
+                    if (!string.IsNullOrEmpty(opponentToonHandle) && !string.IsNullOrEmpty(ourCharId))
                     {
-                        opponentGames = _replayService.GetGamesByOpponentId(ourCharId, opponentCharId, limit: 100);
-                        opponentLastBuild = _replayService.GetOpponentLastBuildOrder(opponentCharId, limit: 20);
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Querying opponent games by ID: ourCharId={ourCharId}, opponentToonHandle={opponentToonHandle}");
+                        opponentGames = _replayService.GetGamesByOpponentId(ourCharId, opponentToonHandle, limit: 100);
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] GetGamesByOpponentId returned {opponentGames?.Count ?? 0} games");
+
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Querying opponent last build order: opponentToonHandle={opponentToonHandle}");
+                        opponentLastBuild = _replayService.GetOpponentLastBuildOrder(opponentToonHandle, limit: 20);
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] GetOpponentLastBuildOrder returned {opponentLastBuild?.Count ?? 0} entries");
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Skipping opponent history queries (ourCharId or opponentToonHandle missing). ourCharId={ourCharId}, opponentToonHandle={opponentToonHandle}");
                     }
 
                     _outputProvider.RenderLobbyInfo(_cachedLobby, _cachedLobby.AdditionalData, _cachedLobby.LastBuildOrderEntry, opponentPlayer, opponentGames, opponentLastBuild);
+
+                    // Log detected queue type if available
+                    if (_cachedLobby.DetectedQueue.HasValue)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Displaying detected queue type: {_cachedLobby.DetectedQueue.Value}");
+                    }
 
                     // Get and display opponent match history
                     var team1 = _cachedLobby.Team1;
@@ -220,10 +248,16 @@ namespace BarcodeRevealTool.Engine
                         var player1Name = team1.Players.First().NickName;
                         var player2Name = team2.Players.First().NickName;
 
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Querying opponent match history by name: player1={player1Name}, player2={player2Name}, limit=5");
                         var history = _replayService.GetOpponentMatchHistory(player1Name, player2Name, limit: 5);
                         if (history.Count > 0)
                         {
+                            System.Diagnostics.Debug.WriteLine($"[GameEngine] GetOpponentMatchHistory returned {history.Count} rows");
                             _outputProvider.RenderOpponentMatchHistory(history);
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine("[GameEngine] GetOpponentMatchHistory returned 0 rows");
                         }
                     }
                 }
@@ -394,11 +428,29 @@ namespace BarcodeRevealTool.Engine
                     System.Diagnostics.Debug.WriteLine($"[GameEngine] Lobby parsed successfully");
                     _cachedLobby = lobby as ISoloGameLobby;
 
-                    // Load opponent stats - wait for completion before displaying
+                    // Load opponent stats and detect queue type in parallel
                     if (_cachedLobby is not null)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Loading additional opponent data from SC2Pulse");
-                        await _cachedLobby.EnsureAdditionalDataLoadedAsync();
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Loading additional opponent data from SC2Pulse and detecting queue type");
+
+                        // Load SC2Pulse data and detect queue type in parallel
+                        var loadDataTask = _cachedLobby.EnsureAdditionalDataLoadedAsync();
+                        var detectQueueTask = QueueDetectionService.DetectQueueTypeAsync(timeoutSeconds: 5);
+
+                        await Task.WhenAll(loadDataTask, detectQueueTask);
+
+                        // Store detected queue type
+                        var detectedQueue = await detectQueueTask;
+                        if (detectedQueue.HasValue)
+                        {
+                            _cachedLobby.DetectedQueue = detectedQueue.Value;
+                            System.Diagnostics.Debug.WriteLine($"[GameEngine] Detected queue type: {detectedQueue.Value}");
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[GameEngine] Failed to detect queue type, will use default");
+                        }
+
                         System.Diagnostics.Debug.WriteLine($"[GameEngine] Additional data load complete, displaying lobby info");
                     }
 

@@ -18,13 +18,17 @@ namespace BarcodeRevealTool.Game
             try
             {
                 var playerMatches = ExtractPlayerMatches(bytes);
-                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Extracted {playerMatches.Count} player matches");
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Extracted {playerMatches.Count} player matches: {string.Join(", ", playerMatches.Cast<Match>().Select(m => m.Value))}");
 
-                ValidateLobbyFormat(playerMatches);
+                // Deduplicate matches while preserving order (keep first occurrence of each unique player)
+                var uniqueMatches = DeduplicateMatches(playerMatches);
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] After deduplication: {uniqueMatches.Count} unique matches: {string.Join(", ", uniqueMatches.Select(m => m.Value))}");
+
+                ValidateLobbyFormat(uniqueMatches);
                 System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Lobby format validation passed");
 
-                var team1 = CreateTeam("Team 1", playerMatches, team1Index: true);
-                var team2 = CreateTeam("Team 2", playerMatches, team1Index: false);
+                var team1 = CreateTeam("Team 1", uniqueMatches, team1Index: true);
+                var team2 = CreateTeam("Team 2", uniqueMatches, team1Index: false);
 
                 var userBattleTag = configuration?.User.BattleTag ?? string.Empty;
                 System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] User battle tag: {userBattleTag}");
@@ -116,34 +120,63 @@ namespace BarcodeRevealTool.Game
             return PlayerNamePattern.Matches(byteString);
         }
 
-        private void ValidateLobbyFormat(MatchCollection playerMatches)
+        /// <summary>
+        /// Deduplicate player name matches while preserving order.
+        /// Keeps the first occurrence of each unique player, removes duplicates.
+        /// Example: [wlvm#833, wlvm#833, Ignacy#236, Ignacy#236, XLover#2803] → [wlvm#833, Ignacy#236, XLover#2803]
+        /// </summary>
+        private List<Match> DeduplicateMatches(MatchCollection playerMatches)
         {
-            // For 1v1, we need exactly 6 matches: 3 for team 1, 3 for team 2
-            // Each team: [name, unknown, tag] = 6 total
-            // Indices used: 0(name1), 2(tag1), 3(name2), 5(tag2) + 2 extras
-            if (playerMatches.Count != 6)
+            var seen = new HashSet<string>();
+            var deduplicated = new List<Match>();
+
+            foreach (Match match in playerMatches)
             {
-                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Invalid match count. Expected 6, found {playerMatches.Count}. Matches: {string.Join(", ", playerMatches.Cast<Match>().Select(m => m.Value))}");
-                throw new InvalidOperationException($"Expected 6 player name matches for 1v1, but found {playerMatches.Count}. Unsupported lobby format or player count.");
+                var playerName = match.Value;
+                if (!seen.Contains(playerName))
+                {
+                    seen.Add(playerName);
+                    deduplicated.Add(match);
+                }
+            }
+
+            return deduplicated;
+        }
+
+        private void ValidateLobbyFormat(List<Match> playerMatches)
+        {
+            // For 1v1, we expect at least 2 unique matches (2 players)
+            // After deduplication, we should have exactly 2 different players
+            if (playerMatches.Count < 2)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Invalid match count. Expected at least 2 unique players, found {playerMatches.Count}. Matches: {string.Join(", ", playerMatches.Select(m => m.Value))}");
+                throw new InvalidOperationException($"Expected at least 2 unique player names for 1v1, but found {playerMatches.Count}. Unsupported lobby format or player count.");
             }
         }
 
-        private Team CreateTeam(string teamName, MatchCollection playerMatches, bool team1Index)
+        private Team CreateTeam(string teamName, List<Match> playerMatches, bool team1Index)
         {
-            int nameMatchIndex = team1Index ? 0 : 3;
-            int tagMatchIndex = team1Index ? 2 : 5;
+            // After deduplication, we have exactly 2 unique players
+            // Team1: player[0], Team2: player[1]
+            int playerIndex = team1Index ? 0 : 1;
 
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] CreateTeam {teamName}: nameIdx={nameMatchIndex}, tagIdx={tagMatchIndex}");
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Match[{nameMatchIndex}]={playerMatches[nameMatchIndex].Value}, Match[{tagMatchIndex}]={playerMatches[tagMatchIndex].Value}");
+            // Validate index is within bounds
+            if (playerIndex >= playerMatches.Count)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Index out of bounds: playerIdx={playerIndex}, total unique players={playerMatches.Count}");
+                throw new InvalidOperationException($"Failed to extract player at index {playerIndex} from {playerMatches.Count} unique players");
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] CreateTeam {teamName}: using player[{playerIndex}]={playerMatches[playerIndex].Value}");
 
             // Extract raw nickname and normalize it (replace _ with # for display)
-            var rawNickName = playerMatches[nameMatchIndex].Groups["name"].Value;
+            var rawNickName = playerMatches[playerIndex].Groups["name"].Value;
             var displayNickName = rawNickName.Replace('_', '#');
 
             var player = new Player
             {
                 NickName = displayNickName,
-                Tag = playerMatches[tagMatchIndex].Groups["name"].Value
+                Tag = playerMatches[playerIndex].Groups["name"].Value
             };
 
             System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Created player: NickName={player.NickName} (raw: {rawNickName}), Tag={player.Tag}");
@@ -159,18 +192,43 @@ namespace BarcodeRevealTool.Game
                 return isUsers ? team1! : team2!;
             }
 
-            // Extract the name prefix from the detected user account (e.g., "Ignacy" from "Ignacy_236")
-            string? namePrefix = ExtractNamePrefix(userBattleTag);
+            // Prepare normalized versions for robust comparison
+            string? namePrefix = ExtractNamePrefix(userBattleTag); // e.g., "Ignacy" from "Ignacy_236"
             string displayBattleTag = userBattleTag.Replace('_', '#');
+            string underscoreBattleTag = userBattleTag.Replace('#', '_');
 
-            // Check if user is in team1 - match by exact tag, display tag, or name prefix
-            var userInTeam1 = team1?.Players.Any(p =>
-                p.Tag.Equals(userBattleTag, StringComparison.OrdinalIgnoreCase) ||
-                p.Tag.Equals(displayBattleTag, StringComparison.OrdinalIgnoreCase) ||
-                p.NickName.Equals(displayBattleTag, StringComparison.OrdinalIgnoreCase) ||
-                (namePrefix != null && p.NickName.StartsWith(namePrefix, StringComparison.OrdinalIgnoreCase))) ?? false;
+            // Debug: list players in both teams
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] FindTeam: userBattleTag='{userBattleTag}', display='{displayBattleTag}', prefix='{namePrefix}'");
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Team1 players: {string.Join(", ", team1?.Players.Select(p => p.Tag + " (" + p.NickName + ")") ?? new string[0])}");
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Team2 players: {string.Join(", ", team2?.Players.Select(p => p.Tag + " (" + p.NickName + ")") ?? new string[0])}");
+
+            bool IsUserMatch(Player p)
+            {
+                if (p == null) return false;
+                var pTag = p.Tag ?? string.Empty;
+                var pNick = p.NickName ?? string.Empty;
+
+                var pTagDisplay = pTag.Replace('_', '#');
+                var pTagUnderscore = pTag.Replace('#', '_');
+
+                // Exact matches (either stored form or normalized forms)
+                if (string.Equals(pTag, userBattleTag, StringComparison.OrdinalIgnoreCase)) return true;
+                if (string.Equals(pTagDisplay, displayBattleTag, StringComparison.OrdinalIgnoreCase)) return true;
+                if (string.Equals(pTagUnderscore, underscoreBattleTag, StringComparison.OrdinalIgnoreCase)) return true;
+
+                // Match by nickname (display form)
+                if (string.Equals(pNick, displayBattleTag, StringComparison.OrdinalIgnoreCase)) return true;
+
+                // Match by name prefix (loose match) as a last resort
+                if (!string.IsNullOrEmpty(namePrefix) && pNick.StartsWith(namePrefix, StringComparison.OrdinalIgnoreCase)) return true;
+
+                return false;
+            }
+
+            var userInTeam1 = team1?.Players.Any(p => IsUserMatch(p)) ?? false;
 
             var userTeam = userInTeam1 ? team1 : team2;
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] User assigned to {(userInTeam1 ? "Team1" : "Team2")}");
             return isUsers ? userTeam! : (userTeam == team1 ? team2 : team1)!;
         }
 

@@ -1,5 +1,6 @@
 using BarcodeRevealTool.Engine;
 using BarcodeRevealTool.Engine.Abstractions;
+using BarcodeRevealTool.Engine.Config;
 using BarcodeRevealTool.Replay;
 using Microsoft.Extensions.Configuration;
 
@@ -13,6 +14,8 @@ namespace BarcodeRevealTool.Services
     {
         private readonly IOutputProvider _outputProvider;
         private readonly IConfiguration _configuration;
+        private AccountWatcherService? _accountWatcher;
+        private bool _initialized = false;
         private string CacheLockFile => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.lock");
         private string CacheValidationFile => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.validation");
         private const int CacheValidationIntervalMinutes = 60; // Re-scan for changes every 60 minutes
@@ -73,6 +76,17 @@ namespace BarcodeRevealTool.Services
         {
             System.Diagnostics.Debug.WriteLine($"[ReplayService] InitializeCacheAsync started");
 
+            // Only run initialization once
+            if (_initialized)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Already initialized, skipping");
+                return;
+            }
+
+            // Detect user account from SC2 link files
+            string? userBattleTag = UserDetectionService.DetectUserAccount();
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] Detected user account: {userBattleTag ?? "None"}");
+
             // Initialize database
             BuildOrderReader.InitializeCache();
             var database = BuildOrderReader.GetDatabase();
@@ -88,6 +102,7 @@ namespace BarcodeRevealTool.Services
             if (appSettings?.Replays?.Folder == null || !Directory.Exists(appSettings.Replays.Folder))
             {
                 System.Diagnostics.Debug.WriteLine($"[ReplayService] Replays folder not configured or doesn't exist");
+                _initialized = true;
                 OnCacheOperationComplete?.Invoke();
                 return;
             }
@@ -130,7 +145,7 @@ namespace BarcodeRevealTool.Services
                 if (allReplayFiles.Length > 0)
                 {
                     _outputProvider.RenderWarning($"{allReplayFiles.Length} replays found.");
-                    await ProcessReplaysAsync(database, allReplayFiles, allReplayFiles.Length);
+                    await ProcessReplaysAsync(database, allReplayFiles, allReplayFiles.Length, userBattleTag);
                     _outputProvider.RenderCacheComplete();
                 }
 
@@ -168,7 +183,7 @@ namespace BarcodeRevealTool.Services
                     if (missingFiles.Count > 0)
                     {
                         _outputProvider.RenderCacheSyncMessage();
-                        await ProcessReplaysAsync(database, missingFiles.ToArray(), missingFiles.Count);
+                        await ProcessReplaysAsync(database, missingFiles.ToArray(), missingFiles.Count, userBattleTag);
                         _outputProvider.RenderSyncComplete(missingFiles.Count);
                     }
                     else
@@ -186,6 +201,28 @@ namespace BarcodeRevealTool.Services
                 }
             }
 
+            // Populate UserAccounts only once during initialization
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] Populating user accounts (first time only)");
+            database.PopulateUserAccounts();
+
+            // Setup account watcher to detect new .lnk files periodically (every 60 seconds)
+            if (_accountWatcher == null)
+            {
+                _accountWatcher = new AccountWatcherService();
+                _accountWatcher.AccountsChanged += (sender, e) =>
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Account watcher detected {e.NewLnkFilesCount} new .lnk file(s), checking for new accounts");
+                    var db = BuildOrderReader.GetDatabase();
+                    if (db != null)
+                    {
+                        db.RefreshUserAccounts();
+                    }
+                };
+                _accountWatcher.StartWatching();
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Account watcher started (checks every 60 seconds)");
+            }
+
+            _initialized = true;
             OnCacheOperationComplete?.Invoke();
         }
 
@@ -242,13 +279,13 @@ namespace BarcodeRevealTool.Services
         /// Process replays in parallel using optimal system resources.
         /// Loads all replay metadata into memory first for maximum performance.
         /// </summary>
-        private async Task ProcessReplaysAsync(ReplayDatabase database, string[] replayFiles, int totalCount)
+        private async Task ProcessReplaysAsync(ReplayDatabase database, string[] replayFiles, int totalCount, string? userBattleTag = null)
         {
             int maxDegreeOfParallelism = GetOptimalDegreeOfParallelism();
 
             System.Diagnostics.Debug.WriteLine(
                 $"[ReplayService] Starting cache build with {replayFiles.Length} files, " +
-                $"{maxDegreeOfParallelism} parallel threads"
+                $"{maxDegreeOfParallelism} parallel threads, userBattleTag={userBattleTag ?? "None"}"
             );
 
             // Stage 1: Load all replay metadata into memory (fast sequential scan)
@@ -279,19 +316,73 @@ namespace BarcodeRevealTool.Services
                 {
                     try
                     {
-                        if (metadata != null)
+                        if (metadata != null && metadata.Players.Count >= 2)
                         {
+                            string yourPlayer = string.Empty, opponentPlayer = string.Empty;
+                            string yourRace = string.Empty, opponentRace = string.Empty;
+                            string? yourPlayerId = null, opponentPlayerId = null;
+
+                            // Determine You vs Opponent based on user battle tag
+                            if (!string.IsNullOrEmpty(userBattleTag))
+                            {
+                                string normalizedUserTag = userBattleTag.Replace('_', '#').ToLower();
+                                string normalizedPlayer1 = metadata.Players[0].Name?.Replace('_', '#').ToLower() ?? "";
+                                string normalizedPlayer2 = metadata.Players[1].Name?.Replace('_', '#').ToLower() ?? "";
+
+                                if (normalizedPlayer1.Contains(normalizedUserTag) || normalizedUserTag.Contains(normalizedPlayer1))
+                                {
+                                    yourPlayer = metadata.Players[0].Name;
+                                    yourRace = metadata.Players[0].Race;
+                                    yourPlayerId = metadata.Players[0].PlayerId;
+                                    opponentPlayer = metadata.Players[1].Name;
+                                    opponentRace = metadata.Players[1].Race;
+                                    opponentPlayerId = metadata.Players[1].PlayerId;
+                                }
+                                else if (normalizedPlayer2.Contains(normalizedUserTag) || normalizedUserTag.Contains(normalizedPlayer2))
+                                {
+                                    yourPlayer = metadata.Players[1].Name;
+                                    yourRace = metadata.Players[1].Race;
+                                    yourPlayerId = metadata.Players[1].PlayerId;
+                                    opponentPlayer = metadata.Players[0].Name;
+                                    opponentRace = metadata.Players[0].Race;
+                                    opponentPlayerId = metadata.Players[0].PlayerId;
+                                }
+                                else
+                                {
+                                    yourPlayer = metadata.Players[0].Name;
+                                    yourRace = metadata.Players[0].Race;
+                                    yourPlayerId = metadata.Players[0].PlayerId;
+                                    opponentPlayer = metadata.Players[1].Name;
+                                    opponentRace = metadata.Players[1].Race;
+                                    opponentPlayerId = metadata.Players[1].PlayerId;
+                                }
+                            }
+                            else
+                            {
+                                yourPlayer = metadata.Players[0].Name;
+                                yourRace = metadata.Players[0].Race;
+                                yourPlayerId = metadata.Players[0].PlayerId;
+                                opponentPlayer = metadata.Players[1].Name;
+                                opponentRace = metadata.Players[1].Race;
+                                opponentPlayerId = metadata.Players[1].PlayerId;
+                            }
+
+                            // Populate Opponents table (skip current user if known)
+                            database.UpsertOpponents(metadata.Players, userBattleTag);
+
+                            var map = !string.IsNullOrEmpty(metadata.Map) ? metadata.Map : "Unknown";
+
                             database.AddOrUpdateReplay(
-                                metadata.Players.Count > 0 ? metadata.Players[0].Name : string.Empty,
-                                metadata.Players.Count > 1 ? metadata.Players[1].Name : string.Empty,
-                                !string.IsNullOrEmpty(metadata.Map) ? metadata.Map : "Unknown",
-                                metadata.Players.Count > 0 ? metadata.Players[0].Race : string.Empty,
-                                metadata.Players.Count > 1 ? metadata.Players[1].Race : string.Empty,
+                                yourPlayer,
+                                opponentPlayer,
+                                map,
+                                yourRace,
+                                opponentRace,
                                 metadata.GameDate,
                                 metadata.FilePath,
                                 metadata.SC2ClientVersion,
-                                metadata.Players.Count > 0 ? metadata.Players[0].PlayerId : null,
-                                metadata.Players.Count > 1 ? metadata.Players[1].PlayerId : null
+                                yourPlayerId,
+                                opponentPlayerId
                             );
                         }
                     }
@@ -472,7 +563,8 @@ namespace BarcodeRevealTool.Services
                 if (metadata != null)
                 {
                     System.Diagnostics.Debug.WriteLine($"[ReplayService] Saving metadata to database");
-                    database.CacheMetadata(metadata);
+                    var detectedUser = UserDetectionService.DetectUserAccount();
+                    database.CacheMetadata(metadata, detectedUser);
                     System.Diagnostics.Debug.WriteLine($"[ReplayService] Replay saved successfully");
                     _outputProvider.RenderWarning($"[+] Saved replay: {Path.GetFileName(replayFilePath)}");
                 }

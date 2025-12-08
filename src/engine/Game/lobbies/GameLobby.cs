@@ -19,6 +19,7 @@ namespace BarcodeRevealTool.Game
         public Sc2PulseClient Client { get; } = new Sc2PulseClient();
         public LadderDistinctCharacter? AdditionalData { get; private set; }
         public BuildOrderEntry? LastBuildOrderEntry { get; set; }
+        public Queue? DetectedQueue { get; set; }
 
 
         public async Task EnsureAdditionalDataLoadedAsync()

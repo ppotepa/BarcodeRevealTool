@@ -8,6 +8,7 @@ namespace BarcodeRevealTool.game.lobbies
         Team? Team2 { get; }
         LadderDistinctCharacter? AdditionalData { get; }
         BuildOrderEntry? LastBuildOrderEntry { get; set; }
+        Queue? DetectedQueue { get; set; }
         Task EnsureAdditionalDataLoadedAsync();
     }
 

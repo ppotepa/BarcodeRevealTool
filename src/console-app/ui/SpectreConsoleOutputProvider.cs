@@ -137,6 +137,7 @@ namespace BarcodeRevealTool.UI.Console
         {
             if (stats == null)
             {
+                System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] No opponent stats available. Likely Sc2Pulse character lookup returned no results. Opponent tag used: {opponentPlayer?.Tag ?? "null"}");
                 AnsiConsole.MarkupLine("[grey]No opponent data available[/]");
                 return;
             }
@@ -230,6 +231,7 @@ namespace BarcodeRevealTool.UI.Console
         {
             if (games == null || games.Count == 0)
             {
+                System.Diagnostics.Debug.WriteLine("[SpectreConsoleOutputProvider] No previous games vs opponent (games collection is null or empty after DB queries).");
                 AnsiConsole.MarkupLine("[grey]No previous games vs opponent[/]");
                 return;
             }
@@ -298,6 +300,7 @@ namespace BarcodeRevealTool.UI.Console
         {
             if (buildOrder == null || buildOrder.Count == 0)
             {
+                System.Diagnostics.Debug.WriteLine("[SpectreConsoleOutputProvider] No cached build order for opponent (GetOpponentLastBuildOrder returned null or empty).");
                 AnsiConsole.MarkupLine("[grey]No cached build order for opponent[/]");
                 return;
             }
@@ -332,6 +335,7 @@ namespace BarcodeRevealTool.UI.Console
 
             if (buildOrder == null)
             {
+                System.Diagnostics.Debug.WriteLine("[SpectreConsoleOutputProvider] No last build order data available (lobby.LastBuildOrderEntry is null).");
                 AnsiConsole.MarkupLine("[grey]No build order data available[/]");
                 return;
             }

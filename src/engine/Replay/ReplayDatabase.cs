@@ -1,5 +1,10 @@
 using System.Data.SQLite;
 using System.Reflection;
+using System.Linq;
+using SqlKata;
+using SqlKata.Compilers;
+using SqlKata.Execution;
+using BarcodeRevealTool.Engine.Config;
 
 namespace BarcodeRevealTool.Replay
 {
@@ -10,6 +15,8 @@ namespace BarcodeRevealTool.Replay
     {
         private readonly string _databasePath;
         private const string DatabaseFileName = "cache.db";
+        private bool _isRefreshing = false; // Guard against re-entrant calls to RefreshUserAccounts
+        private readonly string _connectionString;
 
         public ReplayDatabase(string? customPath = null)
         {
@@ -20,16 +27,40 @@ namespace BarcodeRevealTool.Replay
 
             Directory.CreateDirectory(dbPath);
             _databasePath = Path.Combine(dbPath, DatabaseFileName);
+            var builder = new SQLiteConnectionStringBuilder
+            {
+                DataSource = _databasePath,
+                JournalMode = SQLiteJournalModeEnum.Wal,
+                CacheSize = 2000,
+                Pooling = true,
+                BusyTimeout = 5000
+            };
+            _connectionString = builder.ToString();
 
             InitializeDatabase();
         }
 
+        private SQLiteConnection CreateConnection()
+        {
+            var connection = new SQLiteConnection(_connectionString)
+            {
+                DefaultTimeout = 5
+            };
+            connection.Open();
+            return connection;
+        }
+
+        private QueryFactory CreateQueryFactory()
+        {
+            var connection = CreateConnection();
+            var compiler = new SqliteCompiler();
+            return new QueryFactory(connection, compiler);
+        }
+
         private void InitializeDatabase()
         {
-            using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-            connection.Open();
+            using var queryFactory = CreateQueryFactory();
 
-            using var command = connection.CreateCommand();
             // Read and execute the schema from embedded resource
             var assembly = Assembly.GetExecutingAssembly();
             var resourceName = "BarcodeRevealTool.Engine.Replay.sql.schema.sqlite";
@@ -42,8 +73,185 @@ namespace BarcodeRevealTool.Replay
 
             using var reader = new StreamReader(stream);
             var schemaSql = reader.ReadToEnd();
-            command.CommandText = schemaSql;
-            command.ExecuteNonQuery();
+
+            // Execute schema statements one by one and tolerate statements that fail
+            // (this helps when upgrading an existing DB that may be missing columns)
+            var statements = schemaSql.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var rawStmt in statements)
+            {
+                var stmt = rawStmt.Trim();
+                if (string.IsNullOrWhiteSpace(stmt))
+                    continue;
+
+                try
+                {
+                    queryFactory.Statement(stmt + ";");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Schema statement failed (ignored): {ex.Message}. Statement start: {stmt.Substring(0, Math.Min(200, stmt.Length))}");
+                }
+            }
+
+            // Populate UserAccounts table on first startup
+            PopulateUserAccounts();
+        }
+
+        /// <summary>
+        /// Populate UserAccounts table with all discovered toon handles from account folder structure.
+        /// This is called once on first database initialization.
+        /// </summary>
+        public void PopulateUserAccounts()
+        {
+            using var queryFactory = CreateQueryFactory();
+
+            // Discover all toon handles and their nick mappings
+            var toonHandles = Engine.Config.AccountToonDiscoveryService.DiscoverAllToonHandles();
+            var nickMapping = Engine.Config.AccountToonDiscoveryService.DiscoverToonNickMapping();
+
+            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Populating UserAccounts with {toonHandles.Count} discovered accounts");
+
+            const string insertSql = @"
+                    INSERT OR IGNORE INTO UserAccounts 
+                    (ToonHandle, NickName, BattleTag, Region, Realm, BattleNetId, DiscoveredAt, UpdatedAt)
+                    VALUES (@ToonHandle, @NickName, @BattleTag, @Region, @Realm, @BattleNetId, @DiscoveredAt, @UpdatedAt)";
+
+            foreach (var toon in toonHandles)
+            {
+                var region = Engine.Config.AccountToonDiscoveryService.ExtractRegion(toon);
+                var realm = Engine.Config.AccountToonDiscoveryService.ExtractRealm(toon);
+                var battleNetId = Engine.Config.AccountToonDiscoveryService.ExtractBattleNetId(toon);
+
+                // Get nick name and discriminator from mapping, or construct battle tag
+                string? nickName = null;
+                string battleTag;
+                if (nickMapping.ContainsKey(toon))
+                {
+                    var (nick, discriminator) = nickMapping[toon];
+                    nickName = nick;
+                    battleTag = $"{nick}#{discriminator}";
+                }
+                else
+                {
+                    // Fallback if nick mapping not found
+                    battleTag = $"Player_{battleNetId}";
+                }
+
+                var parameters = new
+                {
+                    ToonHandle = toon,
+                    NickName = nickName,
+                    BattleTag = battleTag,
+                    Region = region ?? "0",
+                    Realm = realm ?? "0",
+                    BattleNetId = battleNetId ?? "0",
+                    DiscoveredAt = DateTime.UtcNow.ToString("O"),
+                    UpdatedAt = DateTime.UtcNow.ToString("O")
+                };
+
+                try
+                {
+                    queryFactory.Statement(insertSql, parameters);
+                    System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Added UserAccount: {toon} -> {battleTag}");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Error adding UserAccount {toon}: {ex.Message}");
+                }
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Finished populating UserAccounts");
+        }
+
+        /// <summary>
+        /// Refresh the UserAccounts table by checking for new accounts and adding them.
+        /// Does NOT delete existing accounts, only adds new ones discovered.
+        /// Call this after cache initialization to ensure accounts are up-to-date.
+        /// </summary>
+        public void RefreshUserAccounts()
+        {
+            // Guard against re-entrant calls (watcher detecting changes during discovery)
+            if (_isRefreshing)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] RefreshUserAccounts already in progress, skipping re-entrant call");
+                return;
+            }
+
+            _isRefreshing = true;
+            try
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Refreshing UserAccounts table (checking for NEW accounts only)");
+
+                using var queryFactory = CreateQueryFactory();
+
+                // Get currently known toon handles from database
+                var knownHandles = new HashSet<string>(
+                    queryFactory.Query("UserAccounts").Select("ToonHandle").Get<string>(),
+                    StringComparer.OrdinalIgnoreCase);
+
+                // Discover all toon handles from file system
+                var allToonHandles = Engine.Config.AccountToonDiscoveryService.DiscoverAllToonHandles();
+                var nickMapping = Engine.Config.AccountToonDiscoveryService.DiscoverToonNickMapping();
+
+                // Only add NEW toons that aren't already in database
+                var newToons = allToonHandles.Where(t => !knownHandles.Contains(t)).ToList();
+
+                if (newToons.Count == 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] No new accounts found");
+                    return;
+                }
+
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Found {newToons.Count} new accounts to add");
+
+                foreach (var toon in newToons)
+                {
+                    var region = Engine.Config.AccountToonDiscoveryService.ExtractRegion(toon);
+                    var realm = Engine.Config.AccountToonDiscoveryService.ExtractRealm(toon);
+                    var battleNetId = Engine.Config.AccountToonDiscoveryService.ExtractBattleNetId(toon);
+
+                    // Get nick name and discriminator from mapping, or construct battle tag
+                    string? nickName = null;
+                    string battleTag;
+                    if (nickMapping.ContainsKey(toon))
+                    {
+                        var (nick, discriminator) = nickMapping[toon];
+                        nickName = nick;
+                        battleTag = $"{nick}#{discriminator}";
+                    }
+                    else
+                    {
+                        // Fallback if nick mapping not found
+                        battleTag = $"Player_{battleNetId}";
+                    }
+
+                    try
+                    {
+                        queryFactory.Query("UserAccounts").Insert(new
+                        {
+                            ToonHandle = toon,
+                            NickName = nickName,
+                            BattleTag = battleTag,
+                            Region = region ?? "0",
+                            Realm = realm ?? "0",
+                            BattleNetId = battleNetId ?? "0",
+                            DiscoveredAt = DateTime.UtcNow.ToString("O"),
+                            UpdatedAt = DateTime.UtcNow.ToString("O")
+                        });
+                        System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Added NEW UserAccount: {toon} -> {battleTag}");
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Error adding UserAccount {toon}: {ex.Message}");
+                    }
+                }
+
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Finished refreshing UserAccounts ({newToons.Count} new accounts added)");
+            }
+            finally
+            {
+                _isRefreshing = false;
+            }
         }
 
         /// <summary>
@@ -60,47 +268,38 @@ namespace BarcodeRevealTool.Replay
                     gameDate
                 );
 
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                using var queryFactory = CreateQueryFactory();
 
-                // First, try to get existing replay by GUID
-                using var selectCommand = connection.CreateCommand();
-                selectCommand.CommandText = "SELECT Id FROM Replays WHERE ReplayGuid = @ReplayGuid";
-                selectCommand.Parameters.AddWithValue("@ReplayGuid", replayGuid.ToString());
+                var existing = queryFactory.Query("Replays")
+                    .Select("Id")
+                    .Where("ReplayGuid", replayGuid.ToString())
+                    .FirstOrDefault<long?>();
 
-                var existingId = selectCommand.ExecuteScalar();
-                if (existingId != null)
+                if (existing.HasValue)
                 {
-                    // Replay already exists, return its ID without modifying
-                    return Convert.ToInt64(existingId);
+                    return existing.Value;
                 }
 
-                // New replay - insert only
                 var fileHash = ComputeFileHash(replayFilePath);
-                using var insertCommand = connection.CreateCommand();
-                insertCommand.CommandText = @"
-                    INSERT INTO Replays
-                    (ReplayGuid, Player1, Player2, Player1Id, Player2Id, Map, Race1, Race2, GameDate, ReplayFilePath, FileHash, SC2ClientVersion, CreatedAt, UpdatedAt)
-                    VALUES (@ReplayGuid, @Player1, @Player2, @Player1Id, @Player2Id, @Map, @Race1, @Race2, @GameDate, @ReplayFilePath, @FileHash, @SC2ClientVersion, @CreatedAt, @UpdatedAt);
-                    SELECT last_insert_rowid();
-                ";
-                insertCommand.Parameters.AddWithValue("@ReplayGuid", replayGuid.ToString());
-                insertCommand.Parameters.AddWithValue("@Player1", player1);
-                insertCommand.Parameters.AddWithValue("@Player2", player2);
-                insertCommand.Parameters.AddWithValue("@Player1Id", player1Id ?? (object)DBNull.Value);
-                insertCommand.Parameters.AddWithValue("@Player2Id", player2Id ?? (object)DBNull.Value);
-                insertCommand.Parameters.AddWithValue("@Map", map);
-                insertCommand.Parameters.AddWithValue("@Race1", race1);
-                insertCommand.Parameters.AddWithValue("@Race2", race2);
-                insertCommand.Parameters.AddWithValue("@GameDate", gameDate.ToString("O"));
-                insertCommand.Parameters.AddWithValue("@ReplayFilePath", replayFilePath);
-                insertCommand.Parameters.AddWithValue("@FileHash", fileHash);
-                insertCommand.Parameters.AddWithValue("@SC2ClientVersion", sc2ClientVersion ?? (object)DBNull.Value);
-                insertCommand.Parameters.AddWithValue("@CreatedAt", DateTime.UtcNow.ToString("O"));
-                insertCommand.Parameters.AddWithValue("@UpdatedAt", DateTime.UtcNow.ToString("O"));
+                var now = DateTime.UtcNow.ToString("O");
 
-                var result = insertCommand.ExecuteScalar();
-                return result != null ? Convert.ToInt64(result) : 0;
+                return queryFactory.Query("Replays").InsertGetId<long>(new
+                {
+                    ReplayGuid = replayGuid.ToString(),
+                    You = player1,
+                    Opponent = player2,
+                    YouId = player1Id,
+                    OpponentId = player2Id,
+                    Map = map,
+                    YourRace = race1,
+                    OpponentRace = race2,
+                    GameDate = gameDate.ToString("O"),
+                    ReplayFilePath = replayFilePath,
+                    FileHash = fileHash,
+                    SC2ClientVersion = sc2ClientVersion,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
             }
             catch (Exception ex)
             {
@@ -116,45 +315,32 @@ namespace BarcodeRevealTool.Replay
         {
             try
             {
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                using var queryFactory = CreateQueryFactory();
 
                 // Clear existing entries
-                using (var command = connection.CreateCommand())
-                {
-                    command.CommandText = "DELETE FROM BuildOrderEntries WHERE ReplayId = @ReplayId";
-                    command.Parameters.AddWithValue("@ReplayId", replayId);
-                    command.ExecuteNonQuery();
-                }
+                queryFactory.Query("BuildOrderEntries")
+                    .Where("ReplayId", replayId)
+                    .Delete();
 
                 // Insert new entries
-                using var insertCommand = connection.CreateCommand();
-                insertCommand.CommandText = @"
-                    INSERT INTO BuildOrderEntries (ReplayId, PlayerId, TimeSeconds, Kind, Name)
-                    VALUES (@ReplayId, @PlayerId, @TimeSeconds, @Kind, @Name)
-                ";
-
-                foreach (var entry in buildOrderEntries)
+                var entries = buildOrderEntries.Select(entry => new
                 {
-                    insertCommand.Parameters.Clear();
-                    insertCommand.Parameters.AddWithValue("@ReplayId", replayId);
-                    insertCommand.Parameters.AddWithValue("@PlayerId", entry.PlayerId);
-                    insertCommand.Parameters.AddWithValue("@TimeSeconds", entry.TimeSeconds);
-                    insertCommand.Parameters.AddWithValue("@Kind", entry.Kind);
-                    insertCommand.Parameters.AddWithValue("@Name", entry.Name);
-                    insertCommand.ExecuteNonQuery();
+                    ReplayId = replayId,
+                    PlayerId = entry.PlayerId,
+                        TimeSeconds = entry.TimeSeconds,
+                    Kind = entry.Kind,
+                    Name = entry.Name
+                }).ToList();
+
+                if (entries.Any())
+                {
+                    queryFactory.Query("BuildOrderEntries").Insert(entries);
                 }
 
                 // Mark build order as cached
-                using var updateCommand = connection.CreateCommand();
-                updateCommand.CommandText = @"
-                    UPDATE Replays
-                    SET BuildOrderCached = 1, CachedAt = @CachedAt
-                    WHERE Id = @ReplayId
-                ";
-                updateCommand.Parameters.AddWithValue("@ReplayId", replayId);
-                updateCommand.Parameters.AddWithValue("@CachedAt", DateTime.UtcNow.ToString("O"));
-                updateCommand.ExecuteNonQuery();
+                queryFactory.Query("Replays")
+                    .Where("Id", replayId)
+                    .Update(new { BuildOrderCached = 1, CachedAt = DateTime.UtcNow.ToString("O") });
 
                 // Console.WriteLine($"  ✓ Stored build order for replay ID {replayId}");
             }
@@ -171,36 +357,13 @@ namespace BarcodeRevealTool.Replay
         {
             try
             {
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                using var queryFactory = CreateQueryFactory();
 
-                using var command = connection.CreateCommand();
-                command.CommandText = @"
-                    SELECT Id, Player1, Player2, Map, Race1, Race2, GameDate, ReplayFilePath, BuildOrderCached, CachedAt
-                    FROM Replays
-                    WHERE ReplayFilePath = @ReplayFilePath
-                ";
-                command.Parameters.AddWithValue("@ReplayFilePath", filePath);
+                var replay = queryFactory.Query("Replays")
+                    .Where("ReplayFilePath", filePath)
+                    .FirstOrDefault<dynamic>();
 
-                using var reader = command.ExecuteReader();
-                if (reader.Read())
-                {
-                    return new ReplayRecord
-                    {
-                        Id = Convert.ToInt64(reader["Id"]),
-                        Player1 = reader["Player1"].ToString() ?? string.Empty,
-                        Player2 = reader["Player2"].ToString() ?? string.Empty,
-                        Map = reader["Map"].ToString() ?? string.Empty,
-                        Race1 = reader["Race1"].ToString() ?? string.Empty,
-                        Race2 = reader["Race2"].ToString() ?? string.Empty,
-                        GameDate = DateTime.Parse(reader["GameDate"].ToString() ?? DateTime.MinValue.ToString("O")),
-                        ReplayFilePath = reader["ReplayFilePath"].ToString() ?? string.Empty,
-                        BuildOrderCached = Convert.ToInt32(reader["BuildOrderCached"]) == 1,
-                        CachedAt = reader["CachedAt"] != DBNull.Value ? DateTime.Parse(reader["CachedAt"].ToString() ?? DateTime.MinValue.ToString("O")) : null
-                    };
-                }
-
-                return null;
+                return MapToReplayRecord(replay);
             }
             catch (Exception ex)
             {
@@ -218,26 +381,20 @@ namespace BarcodeRevealTool.Replay
 
             try
             {
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                using var queryFactory = CreateQueryFactory();
 
-                using var command = connection.CreateCommand();
-                command.CommandText = @"
-                    SELECT PlayerId, TimeSeconds, Kind, Name
-                    FROM BuildOrderEntries
-                    WHERE ReplayId = @ReplayId
-                    ORDER BY TimeSeconds ASC
-                ";
-                command.Parameters.AddWithValue("@ReplayId", replayId);
+                var dbEntries = queryFactory.Query("BuildOrderEntries")
+                    .Where("ReplayId", replayId)
+                    .OrderBy("TimeSeconds")
+                    .Get<dynamic>();
 
-                using var reader = command.ExecuteReader();
-                while (reader.Read())
+                foreach (var entry in dbEntries)
                 {
                     entries.Enqueue(new BuildOrderEntry(
-                        PlayerId: Convert.ToInt32(reader["PlayerId"]),
-                        TimeSeconds: Convert.ToDouble(reader["TimeSeconds"]),
-                        Kind: reader["Kind"].ToString() ?? string.Empty,
-                        Name: reader["Name"].ToString() ?? string.Empty
+                        PlayerId: Convert.ToInt32(entry.PlayerId),
+                        TimeSeconds: Convert.ToDouble(entry.TimeSeconds),
+                        Kind: entry.Kind.ToString() ?? string.Empty,
+                        Name: entry.Name.ToString() ?? string.Empty
                     ));
                 }
             }
@@ -258,34 +415,18 @@ namespace BarcodeRevealTool.Replay
 
             try
             {
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                using var queryFactory = CreateQueryFactory();
 
-                using var command = connection.CreateCommand();
-                command.CommandText = @"
-                    SELECT Id, Player1, Player2, Map, Race1, Race2, GameDate, ReplayFilePath, BuildOrderCached, CachedAt
-                    FROM Replays
-                    WHERE Player1 LIKE @PlayerName OR Player2 LIKE @PlayerName
-                    ORDER BY GameDate DESC
-                ";
-                command.Parameters.AddWithValue("@PlayerName", $"%{playerName}%");
+                var likePattern = $"%{playerName}%";
+                var dbReplays = queryFactory.Query("Replays")
+                    .Where(q => q.Where("You", "like", likePattern)
+                                 .OrWhere("Opponent", "like", likePattern))
+                    .OrderByDesc("GameDate")
+                    .Get<dynamic>();
 
-                using var reader = command.ExecuteReader();
-                while (reader.Read())
+                foreach (var replay in dbReplays)
                 {
-                    replays.Add(new ReplayRecord
-                    {
-                        Id = Convert.ToInt64(reader["Id"]),
-                        Player1 = reader["Player1"].ToString() ?? string.Empty,
-                        Player2 = reader["Player2"].ToString() ?? string.Empty,
-                        Map = reader["Map"].ToString() ?? string.Empty,
-                        Race1 = reader["Race1"].ToString() ?? string.Empty,
-                        Race2 = reader["Race2"].ToString() ?? string.Empty,
-                        GameDate = DateTime.Parse(reader["GameDate"].ToString() ?? DateTime.MinValue.ToString("O")),
-                        ReplayFilePath = reader["ReplayFilePath"].ToString() ?? string.Empty,
-                        BuildOrderCached = Convert.ToInt32(reader["BuildOrderCached"]) == 1,
-                        CachedAt = reader["CachedAt"] != DBNull.Value ? DateTime.Parse(reader["CachedAt"].ToString() ?? DateTime.MinValue.ToString("O")) : null
-                    });
+                    replays.Add(MapToReplayRecord(replay)!);
                 }
             }
             catch (Exception ex)
@@ -306,53 +447,110 @@ namespace BarcodeRevealTool.Replay
 
             try
             {
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                using var queryFactory = CreateQueryFactory();
 
-                using var command = connection.CreateCommand();
-                command.CommandText = @"
-                    SELECT Player1, Player2, Map, Race1, Race2, GameDate, ReplayFilePath
-                    FROM Replays
-                    WHERE (Player1 LIKE @YourName AND Player2 LIKE @OpponentName)
-                       OR (Player2 LIKE @YourName AND Player1 LIKE @OpponentName)
-                    ORDER BY GameDate DESC
-                    LIMIT @Limit
-                ";
-                command.Parameters.AddWithValue("@YourName", $"%{yourPlayerName}%");
-                command.Parameters.AddWithValue("@OpponentName", $"%{opponentName}%");
-                command.Parameters.AddWithValue("@Limit", limit);
+                // Load all known user nicknames from UserAccounts (local user's accounts)
+                // "Nickname" here means full tag: Name#123. We also derive name-only prefixes for matching
+                // against Replays.You/Opponent, which may only contain the name part.
+                var userRows = queryFactory.Query("UserAccounts")
+                    .Select("NickName", "BattleTag")
+                    .Get<dynamic>();
 
-                using var reader = command.ExecuteReader();
-                while (reader.Read())
+                var userFullTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var userNamePrefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var row in userRows)
                 {
-                    var player1 = reader["Player1"].ToString() ?? string.Empty;
-                    var player2 = reader["Player2"].ToString() ?? string.Empty;
-                    var race1 = reader["Race1"].ToString() ?? string.Empty;
-                    var race2 = reader["Race2"].ToString() ?? string.Empty;
-                    var gameDate = DateTime.Parse(reader["GameDate"].ToString() ?? DateTime.MinValue.ToString("O"));
-                    var map = reader["Map"].ToString() ?? string.Empty;
-                    var replayPath = reader["ReplayFilePath"].ToString() ?? string.Empty;
+                    string rawNick = row.NickName?.ToString() ?? string.Empty;
+                    string rawBattleTag = row.BattleTag?.ToString() ?? string.Empty;
 
-                    // Determine which player is "you" and which is opponent
-                    string yourRace, opponentRaceInMatch, opponentInMatch;
+                    string normalized = !string.IsNullOrWhiteSpace(rawNick)
+                        ? NormalizeTag(rawNick)
+                        : NormalizeTag(rawBattleTag);
 
-                    if (player1.Contains(yourPlayerName))
+                    if (!string.IsNullOrWhiteSpace(normalized))
+                    {
+                        userFullTags.Add(normalized); // e.g., "Ignacy#236"
+                        var prefix = GetTagPrefix(normalized); // e.g., "Ignacy"
+                        if (!string.IsNullOrWhiteSpace(prefix))
+                        {
+                            userNamePrefixes.Add(prefix);
+                        }
+                    }
+                }
+
+                var normalizedOppTag = NormalizeTag(opponentName);          // "Ignacy#236"
+                var normalizedOppNick = GetTagPrefix(normalizedOppTag);     // "Ignacy"
+                var oppLike = $"%{normalizedOppNick}%";                      // DB stores names, not full tags
+
+                System.Diagnostics.Debug.WriteLine(
+                    $"[ReplayDatabase.GetOpponentMatchHistory] yourPlayerName={yourPlayerName}, opponentName={opponentName}, " +
+                    $"limit={limit}, userNicknames=[{string.Join(", ", userFullTags)}], oppLike={oppLike}, normalizedOppTag={normalizedOppTag}, normalizedOppNick={normalizedOppNick}");
+
+                var dbReplays = queryFactory.Query("Replays")
+                    .Where(q => q
+                        .Where("You", "like", oppLike)
+                        .OrWhere("Opponent", "like", oppLike))
+                    .OrderByDesc("GameDate")
+                    .Get<dynamic>();
+
+                foreach (var replay in dbReplays)
+                {
+                    var player1 = replay.You?.ToString() ?? string.Empty;
+                    var player2 = replay.Opponent?.ToString() ?? string.Empty;
+                    var race1 = replay.YourRace?.ToString() ?? string.Empty;
+                    var race2 = replay.OpponentRace?.ToString() ?? string.Empty;
+                    var gameDate = DateTime.Parse(replay.GameDate?.ToString() ?? DateTime.MinValue.ToString("O"));
+                    var map = replay.Map?.ToString() ?? string.Empty;
+                    var replayPath = replay.ReplayFilePath?.ToString() ?? string.Empty;
+
+                    // Normalize player names and derive prefixes to match both full tags and plain names
+                    var normP1 = NormalizeTag(player1);
+                    var normP2 = NormalizeTag(player2);
+                    var p1Prefix = GetTagPrefix(normP1);
+                    var p2Prefix = GetTagPrefix(normP2);
+
+                    bool p1IsUser = userFullTags.Contains(normP1) || userNamePrefixes.Contains(p1Prefix);
+                    bool p2IsUser = userFullTags.Contains(normP2) || userNamePrefixes.Contains(p2Prefix);
+
+                    bool p1IsOpp = normP1.Equals(normalizedOppTag, StringComparison.OrdinalIgnoreCase) ||
+                                   p1Prefix.Equals(normalizedOppNick, StringComparison.OrdinalIgnoreCase);
+                    bool p2IsOpp = normP2.Equals(normalizedOppTag, StringComparison.OrdinalIgnoreCase) ||
+                                   p2Prefix.Equals(normalizedOppNick, StringComparison.OrdinalIgnoreCase);
+
+                    // Determine which player is "you" (any of user's accounts) and which is opponent
+                    string yourRace;
+                    string opponentRaceInMatch;
+                    string opponentInMatch;
+
+                    if (p1IsUser && p2IsOpp)
                     {
                         yourRace = race1;
                         opponentRaceInMatch = race2;
                         opponentInMatch = player2;
                     }
-                    else
+                    else if (p2IsUser && p1IsOpp)
                     {
                         yourRace = race2;
                         opponentRaceInMatch = race1;
                         opponentInMatch = player1;
                     }
+                    else
+                    {
+                        // Skip replays where we can't clearly identify user vs opponent
+                        continue;
+                    }
 
                     var replayFileName = Path.GetFileName(replayPath);
 
                     history.Add((opponentInMatch, gameDate, map, yourRace, opponentRaceInMatch, replayFileName));
+
+                    if (history.Count >= limit)
+                    {
+                        break;
+                    }
                 }
+
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetOpponentMatchHistory] Found {history.Count} matching replays");
             }
             catch (Exception ex)
             {
@@ -365,6 +563,7 @@ namespace BarcodeRevealTool.Replay
         /// <summary>
         /// Get all games against a specific opponent by their player ID.
         /// Returns games with player races to determine win/loss.
+        /// Normalizes the toon handle by removing region prefix and searches using LIKE pattern.
         /// </summary>
         public List<(string, string, string, string, DateTime, string)>
             GetGamesByOpponentId(string yourPlayerId, string opponentPlayerId, int limit = 100)
@@ -372,54 +571,56 @@ namespace BarcodeRevealTool.Replay
             var games = new List<(string, string, string, string, DateTime, string)>();
 
             // Normalize player IDs to handle both formats (with and without region prefix)
+            // E.g., "1-S2-2-1369255" becomes "S2-2-1369255"
             string normalizedYourId = BuildOrderReader.NormalizeToonHandle(yourPlayerId);
             string normalizedOpponentId = BuildOrderReader.NormalizeToonHandle(opponentPlayerId);
 
-            // Extract the last bit for LIKE fallback queries
-            string? yourIdLastBit = BuildOrderReader.ExtractToonHandleLastBit(yourPlayerId);
-            string? opponentIdLastBit = BuildOrderReader.ExtractToonHandleLastBit(opponentPlayerId);
+            // Extract the battle.net ID (last part) for LIKE queries
+            // E.g., "S2-2-1369255" → last part is "1369255"
+            string? opponentIdLastBit = normalizedOpponentId.Split('-').LastOrDefault();
+            string? yourIdLastBit = normalizedYourId.Split('-').LastOrDefault();
 
-            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetGamesByOpponentId] yourPlayerId={yourPlayerId}, normalized={normalizedYourId}, lastBit={yourIdLastBit}");
-            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetGamesByOpponentId] opponentPlayerId={opponentPlayerId}, normalized={normalizedOpponentId}, lastBit={opponentIdLastBit}");
+            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetGamesByOpponentId] yourPlayerId={yourPlayerId}, normalized={normalizedYourId}");
+            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetGamesByOpponentId] opponentPlayerId={opponentPlayerId}, normalized={normalizedOpponentId}, idBit={opponentIdLastBit}");
 
             try
             {
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                using var queryFactory = CreateQueryFactory();
 
-                using var command = connection.CreateCommand();
-                command.CommandText = @"
-                    SELECT Player1, Player2, Race1, Race2, GameDate, Map, Player1Id, Player2Id
-                    FROM Replays
-                    WHERE (Player1Id = @YourId AND Player2Id = @OpponentId)
-                       OR (Player2Id = @YourId AND Player1Id = @OpponentId)
-                       OR (Player1Id LIKE ('%' || @YourIdLastBit || '%') AND Player2Id LIKE ('%' || @OpponentIdLastBit || '%'))
-                       OR (Player2Id LIKE ('%' || @YourIdLastBit || '%') AND Player1Id LIKE ('%' || @OpponentIdLastBit || '%'))
-                    ORDER BY GameDate DESC
-                    LIMIT @Limit
-                ";
-                command.Parameters.AddWithValue("@YourId", normalizedYourId);
-                command.Parameters.AddWithValue("@OpponentId", normalizedOpponentId);
-                command.Parameters.AddWithValue("@YourIdLastBit", yourIdLastBit ?? string.Empty);
-                command.Parameters.AddWithValue("@OpponentIdLastBit", opponentIdLastBit ?? string.Empty);
-                command.Parameters.AddWithValue("@Limit", limit);
+                var dbReplays = queryFactory.Query("Replays")
+                    .Where(q => q
+                        .Where("YouId", "like", $"%{opponentIdLastBit}%")
+                        .OrWhere("OpponentId", "like", $"%{opponentIdLastBit}%"))
+                    .OrderByDesc("GameDate")
+                    .Limit(limit)
+                    .Get<dynamic>();
 
-                using var reader = command.ExecuteReader();
-                while (reader.Read())
+                foreach (var replay in dbReplays)
                 {
-                    var player1 = reader["Player1"].ToString() ?? string.Empty;
-                    var player2 = reader["Player2"].ToString() ?? string.Empty;
-                    var race1 = reader["Race1"].ToString() ?? string.Empty;
-                    var race2 = reader["Race2"].ToString() ?? string.Empty;
-                    var gameDate = DateTime.Parse(reader["GameDate"].ToString() ?? DateTime.MinValue.ToString("O"));
-                    var map = reader["Map"].ToString() ?? string.Empty;
-                    var player1Id = reader["Player1Id"].ToString() ?? string.Empty;
+                    var player1 = replay.You?.ToString() ?? string.Empty;
+                    var player2 = replay.Opponent?.ToString() ?? string.Empty;
+                    var race1 = replay.YourRace?.ToString() ?? string.Empty;
+                    var race2 = replay.OpponentRace?.ToString() ?? string.Empty;
+                    var gameDate = DateTime.Parse(replay.GameDate?.ToString() ?? DateTime.MinValue.ToString("O"));
+                    var map = replay.Map?.ToString() ?? string.Empty;
+                    var player1Id = replay.YouId?.ToString() ?? string.Empty;
+                    var player2Id = replay.OpponentId?.ToString() ?? string.Empty;
 
-                    // Determine which player is "you"
+                    // Normalize retrieved IDs for comparison
+                    string normalizedPlayer1Id = BuildOrderReader.NormalizeToonHandle(player1Id);
+                    string normalizedPlayer2Id = BuildOrderReader.NormalizeToonHandle(player2Id);
+
+                    // Determine which player is the opponent (matching normalized ID)
                     string yourName, opponentName, yourRace, opponentRaceInMatch;
 
-                    string normalizedPlayer1Id = BuildOrderReader.NormalizeToonHandle(player1Id);
-                    if (normalizedPlayer1Id == normalizedYourId)
+                    if (normalizedPlayer1Id.EndsWith(opponentIdLastBit ?? "", StringComparison.OrdinalIgnoreCase))
+                    {
+                        yourName = player2;
+                        opponentName = player1;
+                        yourRace = race2;
+                        opponentRaceInMatch = race1;
+                    }
+                    else if (normalizedPlayer2Id.EndsWith(opponentIdLastBit ?? "", StringComparison.OrdinalIgnoreCase))
                     {
                         yourName = player1;
                         opponentName = player2;
@@ -428,10 +629,8 @@ namespace BarcodeRevealTool.Replay
                     }
                     else
                     {
-                        yourName = player2;
-                        opponentName = player1;
-                        yourRace = race2;
-                        opponentRaceInMatch = race1;
+                        // Skip if we can't determine which is opponent
+                        continue;
                     }
 
                     games.Add((yourName, opponentName, yourRace, opponentRaceInMatch, gameDate, map));
@@ -441,7 +640,7 @@ namespace BarcodeRevealTool.Replay
             }
             catch (Exception ex)
             {
-                // Console.WriteLine($"Error retrieving games by opponent ID: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetGamesByOpponentId] Error: {ex.Message}");
             }
 
             return games;
@@ -449,49 +648,51 @@ namespace BarcodeRevealTool.Replay
 
         /// <summary>
         /// Get the most recent cached build order for a specific opponent.
+        /// Normalizes the toon handle by removing region prefix and searches using LIKE pattern.
         /// </summary>
         public List<(double timeSeconds, string kind, string name)>? GetOpponentLastBuildOrder(string opponentPlayerId, int limit = 20)
         {
             try
             {
-                // Normalize player ID to handle both formats
+                // Normalize player ID to handle both formats (with and without region prefix)
+                // E.g., "1-S2-2-1369255" becomes "S2-2-1369255"
                 string normalizedOpponentId = BuildOrderReader.NormalizeToonHandle(opponentPlayerId);
-                string? opponentIdLastBit = BuildOrderReader.ExtractToonHandleLastBit(opponentPlayerId);
 
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                // Extract just the battle.net ID (last part) for LIKE queries
+                // E.g., "S2-2-1369255" → last part is "1369255"
+                string? opponentIdLastBit = normalizedOpponentId.Split('-').LastOrDefault();
 
-                using var command = connection.CreateCommand();
-                command.CommandText = @"
-                    SELECT boe.TimeSeconds, boe.Kind, boe.Name
-                    FROM BuildOrderEntries boe
-                    INNER JOIN Replays r ON boe.ReplayId = r.Id
-                    WHERE (r.Player1Id = @OpponentId OR r.Player2Id = @OpponentId
-                           OR r.Player1Id LIKE '%' || @OpponentIdLastBit OR r.Player2Id LIKE '%' || @OpponentIdLastBit)
-                      AND r.BuildOrderCached = 1
-                    ORDER BY r.GameDate DESC
-                    LIMIT @Limit
-                ";
-                command.Parameters.AddWithValue("@OpponentId", normalizedOpponentId);
-                command.Parameters.AddWithValue("@OpponentIdLastBit", opponentIdLastBit ?? string.Empty);
-                command.Parameters.AddWithValue("@Limit", limit);
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetOpponentLastBuildOrder] opponentPlayerId={opponentPlayerId}, normalized={normalizedOpponentId}, idBit={opponentIdLastBit}");
+
+                using var queryFactory = CreateQueryFactory();
+
+                var dbEntries = queryFactory.Query("BuildOrderEntries as boe")
+                    .Join("Replays as r", "boe.ReplayId", "r.Id")
+                    .Where(q => q.Where("r.Player1Id", "like", $"%{opponentIdLastBit}%")
+                                 .OrWhere("r.Player2Id", "like", $"%{opponentIdLastBit}%"))
+                    .Where("r.BuildOrderCached", 1)
+                    .OrderByDesc("r.GameDate")
+                    .Limit(limit)
+                    .Select("boe.TimeSeconds", "boe.Kind", "boe.Name")
+                    .Get<dynamic>();
 
                 var buildOrders = new List<(double, string, string)>();
-                using var reader = command.ExecuteReader();
-                while (reader.Read())
+                foreach (var entry in dbEntries)
                 {
                     buildOrders.Add((
-                        Convert.ToDouble(reader["TimeSeconds"]),
-                        reader["Kind"].ToString() ?? string.Empty,
-                        reader["Name"].ToString() ?? string.Empty
+                        Convert.ToDouble(entry.TimeSeconds),
+                        entry.Kind.ToString() ?? string.Empty,
+                        entry.Name.ToString() ?? string.Empty
                     ));
                 }
+
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetOpponentLastBuildOrder] Found {buildOrders.Count} build order entries");
 
                 return buildOrders.Count > 0 ? buildOrders : null;
             }
             catch (Exception ex)
             {
-                // Console.WriteLine($"Error retrieving opponent's last build order: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetOpponentLastBuildOrder] Error: {ex.Message}");
                 return null;
             }
         }
@@ -504,24 +705,19 @@ namespace BarcodeRevealTool.Replay
         {
             try
             {
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                using var queryFactory = CreateQueryFactory();
 
-                using var command = connection.CreateCommand();
-                command.CommandText = @"
-                    SELECT ConfigHash, ReplayFolderPath, RecursiveScan, LastValidated
-                    FROM ConfigMetadata
-                    WHERE Id = 1
-                ";
+                var record = queryFactory.Query("ConfigMetadata")
+                    .Where("Id", 1)
+                    .FirstOrDefault<dynamic>();
 
-                using var reader = command.ExecuteReader();
-                if (reader.Read())
+                if (record != null)
                 {
                     return (
-                        reader["ConfigHash"].ToString() ?? string.Empty,
-                        reader["ReplayFolderPath"].ToString() ?? string.Empty,
-                        Convert.ToInt32(reader["RecursiveScan"]) == 1,
-                        reader["LastValidated"].ToString() ?? DateTime.UtcNow.ToString("O")
+                        record.ConfigHash?.ToString() ?? string.Empty,
+                        record.ReplayFolderPath?.ToString() ?? string.Empty,
+                        Convert.ToInt32(record.RecursiveScan ?? 0) == 1,
+                        record.LastValidated?.ToString() ?? DateTime.UtcNow.ToString("O")
                     );
                 }
 
@@ -542,20 +738,19 @@ namespace BarcodeRevealTool.Replay
         {
             try
             {
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                using var queryFactory = CreateQueryFactory();
 
-                using var command = connection.CreateCommand();
-                command.CommandText = @"
+                const string sql = @"
                     INSERT OR REPLACE INTO ConfigMetadata (Id, ConfigHash, ReplayFolderPath, RecursiveScan, LastValidated)
-                    VALUES (1, @ConfigHash, @FolderPath, @Recursive, @LastValidated)
-                ";
-                command.Parameters.AddWithValue("@ConfigHash", configHash);
-                command.Parameters.AddWithValue("@FolderPath", folderPath);
-                command.Parameters.AddWithValue("@Recursive", recursive ? 1 : 0);
-                command.Parameters.AddWithValue("@LastValidated", DateTime.UtcNow.ToString("O"));
+                    VALUES (1, @ConfigHash, @ReplayFolderPath, @RecursiveScan, @LastValidated)";
 
-                command.ExecuteNonQuery();
+                queryFactory.Statement(sql, new
+                {
+                    ConfigHash = configHash,
+                    ReplayFolderPath = folderPath,
+                    RecursiveScan = recursive ? 1 : 0,
+                    LastValidated = DateTime.UtcNow.ToString("O")
+                });
             }
             catch (Exception ex)
             {
@@ -573,23 +768,19 @@ namespace BarcodeRevealTool.Replay
 
             try
             {
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                using var queryFactory = CreateQueryFactory();
 
-                using var command = connection.CreateCommand();
-                command.CommandText = @"
-                    SELECT Id, ReplayFilePath
-                    FROM Replays
-                    ORDER BY CreatedAt DESC
-                ";
+                var dbReplays = queryFactory.Query("Replays")
+                    .Select("Id", "ReplayFilePath")
+                    .OrderByDesc("CreatedAt")
+                    .Get<dynamic>();
 
-                using var reader = command.ExecuteReader();
-                while (reader.Read())
+                foreach (var replay in dbReplays)
                 {
                     replays.Add(new ReplayRecord
                     {
-                        Id = Convert.ToInt64(reader["Id"]),
-                        ReplayFilePath = reader["ReplayFilePath"].ToString() ?? string.Empty
+                        Id = Convert.ToInt64(replay.Id),
+                        ReplayFilePath = replay.ReplayFilePath?.ToString() ?? string.Empty
                     });
                 }
             }
@@ -614,23 +805,12 @@ namespace BarcodeRevealTool.Replay
 
             try
             {
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                using var queryFactory = CreateQueryFactory();
 
                 // Get all cached file paths
-                using var command = connection.CreateCommand();
-                command.CommandText = "SELECT ReplayFilePath FROM Replays";
-
-                var cachedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                using var reader = command.ExecuteReader();
-                while (reader.Read())
-                {
-                    var path = reader["ReplayFilePath"].ToString();
-                    if (!string.IsNullOrEmpty(path))
-                    {
-                        cachedPaths.Add(path);
-                    }
-                }
+                var cachedPaths = new HashSet<string>(
+                    queryFactory.Query("Replays").Select("ReplayFilePath").Get<string>().Where(p => !string.IsNullOrEmpty(p)),
+                    StringComparer.OrdinalIgnoreCase);
 
                 // Find missing files (on disk but not in cache)
                 foreach (var filePath in allReplayFilesOnDisk)
@@ -657,16 +837,12 @@ namespace BarcodeRevealTool.Replay
         {
             try
             {
-                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
-                connection.Open();
+                using var queryFactory = CreateQueryFactory();
 
-                using var command = connection.CreateCommand();
-                command.CommandText = "SELECT COUNT(*) FROM Replays";
-                var total = (long?)command.ExecuteScalar() ?? 0;
-
-                using var command2 = connection.CreateCommand();
-                command2.CommandText = "SELECT COUNT(*) FROM Replays WHERE BuildOrderCached = 1";
-                var withBuildOrder = (long?)command2.ExecuteScalar() ?? 0;
+                var total = queryFactory.Query("Replays").Count<long>();
+                var withBuildOrder = queryFactory.Query("Replays")
+                    .Where("BuildOrderCached", 1)
+                    .Count<long>();
 
                 return ((int)total, (int)withBuildOrder);
             }
@@ -681,7 +857,7 @@ namespace BarcodeRevealTool.Replay
         /// Safe to call multiple times - automatically skips duplicates by file path.
         /// Used during initial cache build on first startup.
         /// </summary>
-        public void CacheMetadata(ReplayMetadata metadata)
+        public void CacheMetadata(ReplayMetadata metadata, string? userBattleTag = null)
         {
             try
             {
@@ -691,6 +867,9 @@ namespace BarcodeRevealTool.Replay
                 {
                     return;
                 }
+
+                // Persist opponents (skip current user if we can identify them)
+                UpsertOpponents(metadata.Players, userBattleTag);
 
                 // Extract player data
                 string player1 = string.Empty, player2 = string.Empty;
@@ -732,6 +911,134 @@ namespace BarcodeRevealTool.Replay
         {
             var (total, withBuildOrder) = GetDatabaseStats();
             return (total, withBuildOrder);
+        }
+
+        private ReplayRecord? MapToReplayRecord(dynamic? replay)
+        {
+            if (replay == null)
+                return null;
+
+            return new ReplayRecord
+            {
+                Id = Convert.ToInt64(replay.Id),
+                Player1 = replay.You?.ToString() ?? string.Empty,
+                Player2 = replay.Opponent?.ToString() ?? string.Empty,
+                Player1Id = replay.YouId?.ToString(),
+                Player2Id = replay.OpponentId?.ToString(),
+                Map = replay.Map?.ToString() ?? string.Empty,
+                Race1 = replay.YourRace?.ToString() ?? string.Empty,
+                Race2 = replay.OpponentRace?.ToString() ?? string.Empty,
+                GameDate = DateTime.Parse(replay.GameDate?.ToString() ?? DateTime.MinValue.ToString("O")),
+                ReplayFilePath = replay.ReplayFilePath?.ToString() ?? string.Empty,
+                BuildOrderCached = Convert.ToInt32(replay.BuildOrderCached ?? 0) == 1,
+                CachedAt = replay.CachedAt != null && replay.CachedAt != DBNull.Value
+                    ? DateTime.Parse(replay.CachedAt.ToString())
+                    : null
+            };
+        }
+
+        /// <summary>
+        /// Upsert opponent records from replay players, skipping the detected user.
+        /// </summary>
+        /// <param name="players">Replay players to store.</param>
+        /// <param name="userBattleTag">Detected user battle tag (with _ or #).</param>
+        public void UpsertOpponents(IEnumerable<PlayerInfo>? players, string? userBattleTag = null)
+        {
+            if (players == null)
+                return;
+
+            var playerList = players.Where(p => p != null).ToList();
+            if (playerList.Count == 0)
+                return;
+
+            string normalizedUserTag = NormalizeTag(userBattleTag);
+            string userPrefix = GetTagPrefix(normalizedUserTag);
+            var now = DateTime.UtcNow.ToString("O");
+
+            using var queryFactory = CreateQueryFactory();
+            const string upsertSql = @"
+                    INSERT INTO Opponents (Name, ToonHandle, BattleTag, FirstSeen, LastSeen, UpdatedAt)
+                    VALUES (@Name, @ToonHandle, @BattleTag, @FirstSeen, @LastSeen, @UpdatedAt)
+                    ON CONFLICT(Name) DO UPDATE SET
+                        ToonHandle = CASE WHEN excluded.ToonHandle != '' THEN excluded.ToonHandle ELSE Opponents.ToonHandle END,
+                        BattleTag = CASE WHEN excluded.BattleTag != '' THEN excluded.BattleTag ELSE Opponents.BattleTag END,
+                        LastSeen = excluded.LastSeen,
+                        UpdatedAt = excluded.UpdatedAt;
+                ";
+
+            foreach (var player in playerList)
+            {
+                string name = NormalizeTag(player.Name);
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+
+                string battleTag = string.IsNullOrWhiteSpace(player.BattleTag)
+                    ? InferBattleTag(name)
+                    : NormalizeTag(player.BattleTag);
+
+                // Skip storing the current user as an opponent
+                if (!string.IsNullOrEmpty(normalizedUserTag))
+                {
+                    string namePrefix = GetTagPrefix(name);
+                    string battlePrefix = GetTagPrefix(battleTag);
+
+                    if (name.Equals(normalizedUserTag, StringComparison.OrdinalIgnoreCase) ||
+                        battleTag.Equals(normalizedUserTag, StringComparison.OrdinalIgnoreCase) ||
+                        (!string.IsNullOrEmpty(userPrefix) && (namePrefix.Equals(userPrefix, StringComparison.OrdinalIgnoreCase) ||
+                                                               battlePrefix.Equals(userPrefix, StringComparison.OrdinalIgnoreCase))))
+                    {
+                        continue;
+                    }
+                }
+
+                string toonHandle = string.IsNullOrWhiteSpace(player.PlayerId)
+                    ? string.Empty
+                    : BuildOrderReader.NormalizeToonHandle(player.PlayerId);
+
+                var parameters = new
+                {
+                    Name = name,
+                    ToonHandle = string.IsNullOrWhiteSpace(toonHandle) ? null : toonHandle,
+                    BattleTag = string.IsNullOrWhiteSpace(battleTag) ? null : battleTag,
+                    FirstSeen = now,
+                    LastSeen = now,
+                    UpdatedAt = now
+                };
+
+                try
+                {
+                    queryFactory.Statement(upsertSql, parameters);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Failed to upsert opponent {name}: {ex.Message}");
+                }
+            }
+        }
+
+        private static string NormalizeTag(string? value)
+        {
+            return string.IsNullOrWhiteSpace(value)
+                ? string.Empty
+                : value.Replace('_', '#').Trim();
+        }
+
+        private static string GetTagPrefix(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return string.Empty;
+
+            var hashIndex = value.IndexOf('#');
+            return hashIndex > 0 ? value.Substring(0, hashIndex) : value;
+        }
+
+        private static string InferBattleTag(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return string.Empty;
+
+            // Prefer display format with '#'
+            return NormalizeTag(name);
         }
 
         private static string ComputeFileHash(string filePath)
