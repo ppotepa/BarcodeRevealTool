@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS Replays (
     ReplayGuid TEXT NOT NULL UNIQUE,
     Player1 TEXT NOT NULL,
     Player2 TEXT NOT NULL,
+    Player1Id TEXT,
+    Player2Id TEXT,
     Map TEXT NOT NULL,
     Race1 TEXT NOT NULL,
     Race2 TEXT NOT NULL,
@@ -34,6 +36,8 @@ CREATE TABLE IF NOT EXISTS BuildOrderEntries (
 CREATE INDEX IF NOT EXISTS idx_Replays_ReplayGuid ON Replays(ReplayGuid);
 CREATE INDEX IF NOT EXISTS idx_Replays_Player1 ON Replays(Player1);
 CREATE INDEX IF NOT EXISTS idx_Replays_Player2 ON Replays(Player2);
+CREATE INDEX IF NOT EXISTS idx_Replays_Player1Id ON Replays(Player1Id);
+CREATE INDEX IF NOT EXISTS idx_Replays_Player2Id ON Replays(Player2Id);
 CREATE INDEX IF NOT EXISTS idx_Replays_Map ON Replays(Map);
 CREATE INDEX IF NOT EXISTS idx_Replays_GameDate ON Replays(GameDate);
 CREATE INDEX IF NOT EXISTS idx_Replays_ReplayFilePath ON Replays(ReplayFilePath);

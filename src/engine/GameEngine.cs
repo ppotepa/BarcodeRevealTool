@@ -153,16 +153,16 @@ namespace BarcodeRevealTool.Engine
                 if (_cachedLobby is not null)
                 {
                     _outputProvider.RenderLobbyInfo(_cachedLobby, _cachedLobby.AdditionalData, _cachedLobby.LastBuildOrderEntry);
-                    
+
                     // Get and display opponent match history
                     var team1 = _cachedLobby.Team1;
                     var team2 = _cachedLobby.Team2;
-                    
+
                     if (team1?.Players.Count > 0 && team2?.Players.Count > 0)
                     {
                         var player1Name = team1.Players.First().NickName;
                         var player2Name = team2.Players.First().NickName;
-                        
+
                         var history = _replayService.GetOpponentMatchHistory(player1Name, player2Name, limit: 5);
                         if (history.Count > 0)
                         {

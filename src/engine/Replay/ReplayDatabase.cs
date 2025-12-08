@@ -95,7 +95,7 @@ namespace BarcodeRevealTool.Replay
         /// Add or update a replay record in the database (INSERT ONLY - never deletes).
         /// </summary>
         public long AddOrUpdateReplay(string player1, string player2, string map, string race1, string race2,
-            DateTime gameDate, string replayFilePath, string? sc2ClientVersion = null)
+            DateTime gameDate, string replayFilePath, string? sc2ClientVersion = null, string? player1Id = null, string? player2Id = null)
         {
             try
             {
@@ -125,13 +125,15 @@ namespace BarcodeRevealTool.Replay
                 using var insertCommand = connection.CreateCommand();
                 insertCommand.CommandText = @"
                     INSERT INTO Replays
-                    (ReplayGuid, Player1, Player2, Map, Race1, Race2, GameDate, ReplayFilePath, FileHash, SC2ClientVersion, CreatedAt, UpdatedAt)
-                    VALUES (@ReplayGuid, @Player1, @Player2, @Map, @Race1, @Race2, @GameDate, @ReplayFilePath, @FileHash, @SC2ClientVersion, @CreatedAt, @UpdatedAt);
+                    (ReplayGuid, Player1, Player2, Player1Id, Player2Id, Map, Race1, Race2, GameDate, ReplayFilePath, FileHash, SC2ClientVersion, CreatedAt, UpdatedAt)
+                    VALUES (@ReplayGuid, @Player1, @Player2, @Player1Id, @Player2Id, @Map, @Race1, @Race2, @GameDate, @ReplayFilePath, @FileHash, @SC2ClientVersion, @CreatedAt, @UpdatedAt);
                     SELECT last_insert_rowid();
                 ";
                 insertCommand.Parameters.AddWithValue("@ReplayGuid", replayGuid.ToString());
                 insertCommand.Parameters.AddWithValue("@Player1", player1);
                 insertCommand.Parameters.AddWithValue("@Player2", player2);
+                insertCommand.Parameters.AddWithValue("@Player1Id", player1Id ?? (object)DBNull.Value);
+                insertCommand.Parameters.AddWithValue("@Player2Id", player2Id ?? (object)DBNull.Value);
                 insertCommand.Parameters.AddWithValue("@Map", map);
                 insertCommand.Parameters.AddWithValue("@Race1", race1);
                 insertCommand.Parameters.AddWithValue("@Race2", race2);
@@ -450,17 +452,20 @@ namespace BarcodeRevealTool.Replay
                 // Extract player data
                 string player1 = string.Empty, player2 = string.Empty;
                 string race1 = string.Empty, race2 = string.Empty;
+                string? player1Id = null, player2Id = null;
 
                 if (metadata.Players.Count > 0)
                 {
                     player1 = metadata.Players[0].Name;
                     race1 = metadata.Players[0].Race;
+                    player1Id = metadata.Players[0].PlayerId;
                 }
 
                 if (metadata.Players.Count > 1)
                 {
                     player2 = metadata.Players[1].Name;
                     race2 = metadata.Players[1].Race;
+                    player2Id = metadata.Players[1].PlayerId;
                 }
 
                 // Use map from metadata, fallback to "Unknown"
@@ -468,7 +473,7 @@ namespace BarcodeRevealTool.Replay
                 var gameDate = metadata.GameDate;
                 var sc2Version = metadata.SC2ClientVersion;
 
-                AddOrUpdateReplay(player1, player2, map, race1, race2, gameDate, metadata.FilePath, sc2Version);
+                AddOrUpdateReplay(player1, player2, map, race1, race2, gameDate, metadata.FilePath, sc2Version, player1Id, player2Id);
                 // Progress is displayed by the caller (RevealTool)
             }
             catch (Exception ex)
@@ -523,6 +528,8 @@ namespace BarcodeRevealTool.Replay
         public long Id { get; set; }
         public string Player1 { get; set; } = string.Empty;
         public string Player2 { get; set; } = string.Empty;
+        public string? Player1Id { get; set; }
+        public string? Player2Id { get; set; }
         public string Map { get; set; } = string.Empty;
         public string Race1 { get; set; } = string.Empty;
         public string Race2 { get; set; } = string.Empty;

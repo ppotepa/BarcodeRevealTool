@@ -108,7 +108,8 @@ namespace BarcodeRevealTool.Replay
                     {
                         Name = p.Name ?? string.Empty,
                         BattleTag = ExtractBattleTag(p.Name),
-                        Race = p.Race ?? "Unknown"
+                        Race = p.Race ?? "Unknown",
+                        PlayerId = ExtractPlayerId(p)
                     }).ToList(),
                     LastModified = new FileInfo(replayFilePath).LastWriteTime
                 };
@@ -181,6 +182,28 @@ namespace BarcodeRevealTool.Replay
             }
 
             return playerName;
+        }
+
+        /// <summary>
+        /// Extract player ID from player object (format: "1-S2-1-11057632").
+        /// Tries to get from UserId property, falls back to empty string if not available.
+        /// </summary>
+        private static string ExtractPlayerId(dynamic player)
+        {
+            try
+            {
+                // Try to access UserId property from s2protocol Player object
+                if (player.UserId != null)
+                {
+                    return player.UserId.ToString() ?? string.Empty;
+                }
+            }
+            catch
+            {
+                // Silently fail if property doesn't exist
+            }
+
+            return string.Empty;
         }
 
         private static Queue<BuildOrderEntry> ExtractBuildOrder(Sc2Replay replay)

@@ -37,5 +37,6 @@ namespace BarcodeRevealTool.Replay
         public string Name { get; set; } = string.Empty;
         public string BattleTag { get; set; } = string.Empty;
         public string Race { get; set; } = string.Empty;
+        public string PlayerId { get; set; } = string.Empty;
     }
 }

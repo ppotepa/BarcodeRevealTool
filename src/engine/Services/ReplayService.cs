@@ -277,7 +277,7 @@ namespace BarcodeRevealTool.Services
             }
         }
 
-        public List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName)> 
+        public List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName)>
             GetOpponentMatchHistory(string yourPlayerName, string opponentName, int limit = 10)
         {
             try
