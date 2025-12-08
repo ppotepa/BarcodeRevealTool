@@ -196,18 +196,18 @@ namespace BarcodeRevealTool.Replay
             try
             {
                 // Try to access Toon object from s2protocol Player
-                var toon = GetDynamicProperty(player, "Toon") 
+                var toon = GetDynamicProperty(player, "Toon")
                         ?? GetDynamicProperty(player, "m_toon");
-                
+
                 if (toon != null)
                 {
-                    int? region = GetDynamicPropertyAsInt(toon, "Region") 
+                    int? region = GetDynamicPropertyAsInt(toon, "Region")
                                ?? GetDynamicPropertyAsInt(toon, "m_region");
-                    int? realm = GetDynamicPropertyAsInt(toon, "Realm") 
+                    int? realm = GetDynamicPropertyAsInt(toon, "Realm")
                               ?? GetDynamicPropertyAsInt(toon, "m_realm");
-                    long? id = GetDynamicPropertyAsLong(toon, "Id") 
+                    long? id = GetDynamicPropertyAsLong(toon, "Id")
                             ?? GetDynamicPropertyAsLong(toon, "m_id");
-                    
+
                     if (region.HasValue && realm.HasValue && id.HasValue)
                     {
                         return $"{region.Value}-S2-{realm.Value}-{id.Value}";
@@ -255,7 +255,7 @@ namespace BarcodeRevealTool.Replay
             {
                 var value = GetDynamicProperty(obj, propertyName);
                 if (value == null) return null;
-                
+
                 if (value is int intVal) return intVal;
                 if (int.TryParse(value.ToString(), out int result)) return result;
             }
@@ -275,7 +275,7 @@ namespace BarcodeRevealTool.Replay
             {
                 var value = GetDynamicProperty(obj, propertyName);
                 if (value == null) return null;
-                
+
                 if (value is long longVal) return longVal;
                 if (long.TryParse(value.ToString(), out long result)) return result;
             }
