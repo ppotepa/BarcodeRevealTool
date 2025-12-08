@@ -1,6 +1,7 @@
 using BarcodeRevealTool.Engine;
 using BarcodeRevealTool.Engine.Abstractions;
 using BarcodeRevealTool.Game;
+using BarcodeRevealTool.game.lobbies;
 using Microsoft.Extensions.Configuration;
 
 namespace BarcodeRevealTool.Adapters

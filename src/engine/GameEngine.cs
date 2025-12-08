@@ -1,4 +1,5 @@
 using BarcodeRevealTool.Engine.Abstractions;
+using BarcodeRevealTool.game.lobbies;
 using Microsoft.Extensions.Configuration;
 using Sc2Pulse;
 

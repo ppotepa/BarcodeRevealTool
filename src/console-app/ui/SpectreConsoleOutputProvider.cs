@@ -1,6 +1,7 @@
 using BarcodeRevealTool.Engine;
 using BarcodeRevealTool.Engine.Abstractions;
 using BarcodeRevealTool.Game;
+using BarcodeRevealTool.game.lobbies;
 using Sc2Pulse.Models;
 using Spectre.Console;
 
@@ -77,7 +78,7 @@ namespace BarcodeRevealTool.UI.Console
             // Currently a no-op - can be enhanced with spinner/pulse effects while awaiting
         }
 
-        public void RenderLobbyInfo(BarcodeRevealTool.Engine.Abstractions.ISoloGameLobby lobby, object? additionalData, object? lastBuildOrder)
+        public void RenderLobbyInfo(ISoloGameLobby lobby, object? additionalData, object? lastBuildOrder)
         {
             System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] RenderLobbyInfo called with lobby={lobby != null}, additionalData={additionalData != null}, lastBuildOrder={lastBuildOrder != null}");
             System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] Team1={lobby.Team1}, Team2={lobby.Team2}");

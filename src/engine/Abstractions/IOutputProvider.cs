@@ -1,3 +1,5 @@
+using BarcodeRevealTool.game.lobbies;
+
 namespace BarcodeRevealTool.Engine.Abstractions
 {
     /// <summary>
@@ -22,17 +24,5 @@ namespace BarcodeRevealTool.Engine.Abstractions
         /// Can be used for animations, refreshing display, etc.
         /// </summary>
         void HandlePeriodicStateUpdate(string state, ISoloGameLobby? lobby);
-    }
-
-    /// <summary>
-    /// Game lobby interface - abstracted from concrete UI types
-    /// </summary>
-    public interface ISoloGameLobby
-    {
-        object? Team1 { get; }
-        object? Team2 { get; }
-        object? AdditionalData { get; }
-        object? LastBuildOrderEntry { get; set; }
-        Task EnsureAdditionalDataLoadedAsync();
     }
 }
