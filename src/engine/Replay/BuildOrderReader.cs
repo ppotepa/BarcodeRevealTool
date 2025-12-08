@@ -21,12 +21,60 @@ namespace BarcodeRevealTool.Replay
         private static ReplayDatabase? _database;
 
         /// <summary>
-        /// Find a player in replay metadata by either battle tag or username.
+        /// Normalize a toonhandle by stripping the region prefix.
+        /// Converts "2-S2-1-11050989" or "1-S2-1-11050989" to "S2-1-11050989"
+        /// Also handles already-normalized handles.
         /// </summary>
+        public static string NormalizeToonHandle(string toonHandle)
+        {
+            if (string.IsNullOrEmpty(toonHandle))
+                return toonHandle;
+
+            // Pattern: (X-)?S2-Y-Z where X is a single digit region (can be 1, 2, etc.)
+            // We want to strip the leading "X-" if it exists
+            var parts = toonHandle.Split('-');
+
+            if (parts.Length >= 3)
+            {
+                // Check if first part is a single digit (region), and second is "S2"
+                if (parts[0].Length == 1 && char.IsDigit(parts[0][0]) && parts[1] == "S2")
+                {
+                    // Has region prefix, strip it: skip first part and rejoin
+                    return string.Join("-", parts.Skip(1));
+                }
+            }
+
+            // Already normalized or doesn't match pattern, return as is
+            return toonHandle;
+        }
+
+        /// <summary>
+        /// Extract the last bit (player ID number) from a toonhandle.
+        /// Example: "S2-1-11050989" → "11050989"
+        /// </summary>
+        public static string? ExtractToonHandleLastBit(string toonHandle)
+        {
+            if (string.IsNullOrEmpty(toonHandle))
+                return null;
+
+            var parts = toonHandle.Split('-');
+            if (parts.Length >= 2)
+            {
+                // Return the last two parts: realm-id (e.g., "2-1369255" from "1-S2-2-1369255" or "S2-2-1369255")
+                return $"{parts[^2]}-{parts[^1]}";
+            }
+
+            return null;
+        }        /// <summary>
+                 /// Find a player in replay metadata by either battle tag or username.
+                 /// </summary>
         public static PlayerInfo? FindPlayerInMetadata(ReplayMetadata metadata, string playerIdentifier)
         {
             if (metadata?.Players == null)
                 return null;
+
+            // Normalize the search identifier to handle both formats
+            string normalizedIdentifier = NormalizeToonHandle(playerIdentifier);
 
             // Try exact battle tag match first
             var playerByTag = metadata.Players.FirstOrDefault(p =>
@@ -34,6 +82,24 @@ namespace BarcodeRevealTool.Replay
 
             if (playerByTag != null)
                 return playerByTag;
+
+            // Try normalized toonhandle match
+            var playerByNormalizedId = metadata.Players.FirstOrDefault(p =>
+                NormalizeToonHandle(p.PlayerId).Equals(normalizedIdentifier, StringComparison.OrdinalIgnoreCase));
+
+            if (playerByNormalizedId != null)
+                return playerByNormalizedId;
+
+            // Try partial match on the last bit of toonhandle (e.g., "11050989" from "S2-1-11050989")
+            string? lastBit = ExtractToonHandleLastBit(playerIdentifier);
+            if (!string.IsNullOrEmpty(lastBit))
+            {
+                var playerByPartialId = metadata.Players.FirstOrDefault(p =>
+                    p.PlayerId.EndsWith(lastBit, StringComparison.OrdinalIgnoreCase));
+
+                if (playerByPartialId != null)
+                    return playerByPartialId;
+            }
 
             // Try case-insensitive name or partial match
             return metadata.Players.FirstOrDefault(p =>
@@ -75,12 +141,13 @@ namespace BarcodeRevealTool.Replay
             {
                 var decoder = new ReplayDecoder();
 
-                // Decode metadata, details, and tracker events for complete info
+                // Decode only minimal required info for caching: metadata and details (no tracker events)
+                // This is much faster since we don't need tracker events for basic cache info
                 var options = new ReplayDecoderOptions
                 {
                     Details = true,
                     Metadata = true,
-                    TrackerEvents = true,
+                    TrackerEvents = false,  // Not needed for metadata extraction
                     GameEvents = false,
                     MessageEvents = false,
                     AttributeEvents = false
@@ -116,9 +183,9 @@ namespace BarcodeRevealTool.Replay
 
                 return metadata;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                // Console.WriteLine($"  ✗ Error reading {Path.GetFileName(replayFilePath)}: {ex.Message}");
+                // Silently ignore parsing errors, return null
                 return null;
             }
         }
@@ -143,29 +210,84 @@ namespace BarcodeRevealTool.Replay
 
         public static async Task<BuildOrder> Read(string replayFolderPath, string playerBattleTag, bool recursive, Func<game.lobbies.ISoloGameLobby, Game.Team> oppositeTeam)
         {
-            var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-            var replayFiles = Directory.GetFiles(replayFolderPath, ReplayExtension, searchOption);
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] Read: Looking for replays with opponent {playerBattleTag}");
 
-            if (replayFiles.Length == 0)
+            // Try local database cache first
+            var buildOrder = await TryGetBuildOrderFromCacheAsync(playerBattleTag);
+            if (buildOrder != null)
             {
-                return new BuildOrder { Entries = new Queue<BuildOrderEntry>() };
+                return buildOrder;
             }
 
-            // Find the most recent replay with the specified player using fast metadata extraction with caching
-            var replayFile = FindMostRecentReplayWithPlayerFast(replayFiles, playerBattleTag);
+            // If not in cache, try external replay services
+            // TODO: Implement alternative sources (e.g., query SC2Pulse replay service, other online replay databases)
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] Read: Not found in cache, alternative sources not yet implemented");
 
-            if (replayFile == null)
+            // Return empty if not found anywhere
+            return new BuildOrder { Entries = new Queue<BuildOrderEntry>() };
+        }
+
+        /// <summary>
+        /// Try to get build order from local cache database.
+        /// Returns null if opponent not found in cache.
+        /// </summary>
+        private static async Task<BuildOrder?> TryGetBuildOrderFromCacheAsync(string playerBattleTag)
+        {
+            if (_database == null)
             {
-                return new BuildOrder { Entries = new Queue<BuildOrderEntry>() };
+                System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] TryGetBuildOrderFromCacheAsync: Database not initialized");
+                return null;
             }
 
-            var buildOrder = await ReadReplay(replayFile);
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] TryGetBuildOrderFromCacheAsync: Querying cache for {playerBattleTag}");
+            var replaysWithOpponent = _database.GetReplaysWithPlayer(playerBattleTag);
+
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] TryGetBuildOrderFromCacheAsync: Cache returned {replaysWithOpponent.Count} replays for {playerBattleTag}");
+
+            if (replaysWithOpponent.Count == 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] TryGetBuildOrderFromCacheAsync: No replays with opponent in cache");
+                return null;
+            }
+
+            // Get the most recent replay (already sorted by date in DB)
+            var mostRecentReplay = replaysWithOpponent
+                .OrderByDescending(r => r.GameDate)
+                .FirstOrDefault();
+
+            if (mostRecentReplay == null)
+            {
+                return null;
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] TryGetBuildOrderFromCacheAsync: Found opponent replay in cache: {Path.GetFileName(mostRecentReplay.ReplayFilePath)}");
+
+            // Check if build order is already cached in DB
+            if (mostRecentReplay.BuildOrderCached)
+            {
+                System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] TryGetBuildOrderFromCacheAsync: Build order already cached in DB");
+                var buildOrderEntries = _database.GetBuildOrderEntries(mostRecentReplay.Id);
+                return new BuildOrder
+                {
+                    Entries = buildOrderEntries,
+                    Metadata = new ReplayMetadata
+                    {
+                        FilePath = mostRecentReplay.ReplayFilePath,
+                        GameDate = mostRecentReplay.GameDate
+                    }
+                };
+            }
+
+            // Build order not cached yet - decode it now
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] TryGetBuildOrderFromCacheAsync: Build order not cached, decoding replay");
+            var buildOrder = await ReadReplay(mostRecentReplay.ReplayFilePath);
 
             // Store in database asynchronously in the background
-            _ = StoreReplayInDatabaseAsync(replayFile, playerBattleTag, buildOrder);
+            _ = StoreReplayInDatabaseAsync(mostRecentReplay.ReplayFilePath, playerBattleTag, buildOrder);
 
             return buildOrder;
         }
+
 
         /// <summary>
         /// Extract battle tag from player name (format: "Name#12345").
@@ -185,9 +307,8 @@ namespace BarcodeRevealTool.Replay
         }
 
         /// <summary>
-        /// <summary>
         /// Extract player toon handle from player object.
-        /// Format: "region-S2-realm-id" (e.g., "2-S2-1-11057632")
+        /// Format: "S2-realm-id" (e.g., "S2-1-11057632") - region prefix is stripped for normalization
         /// This is Blizzard's stable unique identifier for an account, 
         /// even if the player uses barcodes or changes their display name.
         /// </summary>
@@ -201,16 +322,15 @@ namespace BarcodeRevealTool.Replay
 
                 if (toon != null)
                 {
-                    int? region = GetDynamicPropertyAsInt(toon, "Region")
-                               ?? GetDynamicPropertyAsInt(toon, "m_region");
                     int? realm = GetDynamicPropertyAsInt(toon, "Realm")
                               ?? GetDynamicPropertyAsInt(toon, "m_realm");
                     long? id = GetDynamicPropertyAsLong(toon, "Id")
                             ?? GetDynamicPropertyAsLong(toon, "m_id");
 
-                    if (region.HasValue && realm.HasValue && id.HasValue)
+                    if (realm.HasValue && id.HasValue)
                     {
-                        return $"{region.Value}-S2-{realm.Value}-{id.Value}";
+                        // Return normalized toonhandle without region prefix: "S2-realm-id"
+                        return $"S2-{realm.Value}-{id.Value}";
                     }
                 }
 
@@ -426,6 +546,7 @@ namespace BarcodeRevealTool.Replay
 
         private static async Task<BuildOrder> ReadReplay(string replayFilePath)
         {
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] ReadReplay: Starting decode for {Path.GetFileName(replayFilePath)}");
             var decoder = new ReplayDecoder();
 
             var options = new ReplayDecoderOptions
@@ -444,6 +565,7 @@ namespace BarcodeRevealTool.Replay
 
             using var cts = new CancellationTokenSource();
 
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] ReadReplay: Decoding replay...");
             Sc2Replay? replay = await decoder.DecodeAsync(replayFilePath, options, cts.Token);
             if (replay == null)
             {
@@ -451,9 +573,12 @@ namespace BarcodeRevealTool.Replay
                 throw new InvalidOperationException("Failed to decode replay.");
             }
 
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] ReadReplay: Decode complete, extracting build order...");
             var build = ExtractBuildOrder(replay);
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] ReadReplay: Extracted {build.Count} build order entries");
 
             // Group and print per player
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] ReadReplay: Starting grouping and display phase...");
             foreach (var playerGroup in build
                          .GroupBy(e => e.PlayerId)
                          .OrderBy(g => g.Key))
@@ -467,20 +592,44 @@ namespace BarcodeRevealTool.Replay
                 string playerName = playerMeta?.Name ?? $"Player {playerGroup.Key}";
                 string race = playerMeta?.Race ?? "Unknown";
 
-                // Console.WriteLine($"=== Build order for {playerName} ({race}) ===");
+                System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] ReadReplay: {playerName} ({race}) - {playerGroup.Count()} entries");
 
                 foreach (var entry in playerGroup.OrderBy(e => e.TimeSeconds))
                 {
                     var t = TimeSpan.FromSeconds(entry.TimeSeconds);
-                    // Console.WriteLine($"{t:mm\\:ss}  {entry.Kind,-8}  {entry.Name}");
                 }
-
-                // Console.WriteLine();
             }
+
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] ReadReplay: Complete, extracting replay metadata...");
+
+            // Extract metadata from the replay object before clearing it
+            string mapName = replay.Metadata?.Title ?? "Unknown Map";
+            DateTime gameDate = new FileInfo(replayFilePath).LastWriteTime;
+            string sc2Version = replay.Metadata?.GameVersion?.ToString() ?? "Unknown";
+
+            var replayMetadata = new ReplayMetadata
+            {
+                FilePath = replayFilePath,
+                Map = mapName,
+                GameDate = gameDate,
+                SC2ClientVersion = sc2Version,
+                Players = replay.Details?.Players?.Select(p => new PlayerInfo
+                {
+                    Name = p.Name ?? string.Empty,
+                    BattleTag = ExtractBattleTag(p.Name),
+                    Race = p.Race ?? "Unknown",
+                    PlayerId = ExtractPlayerId(p)
+                }).ToList() ?? new List<PlayerInfo>(),
+                LastModified = new FileInfo(replayFilePath).LastWriteTime
+            };
+
+            System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] ReadReplay: Complete, clearing replay object...");
+            replay = null;
 
             return new BuildOrder
             {
-                Entries = build
+                Entries = build,
+                Metadata = replayMetadata
             };
         }
 
@@ -491,21 +640,36 @@ namespace BarcodeRevealTool.Replay
         {
             try
             {
+                System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] StoreReplayInDatabaseAsync: Starting background DB storage for {Path.GetFileName(replayFilePath)}");
                 await Task.Run(() =>
                 {
                     if (_database == null)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] StoreReplayInDatabaseAsync: Database not initialized, skipping");
                         return;
+                    }
 
-                    var metadata = GetReplayMetadataFast(replayFilePath);
-                    if (metadata?.Players == null || metadata.Players.Count < 2)
+                    // Use metadata already extracted during decode - no need to call GetReplayMetadataFast again!
+                    if (buildOrder.Metadata is null)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] StoreReplayInDatabaseAsync: No metadata in BuildOrder, skipping");
                         return;
+                    }
 
-                    var player1 = metadata.Players[0];
-                    var player2 = metadata.Players.Count > 1 ? metadata.Players[1] : player1;
-                    var map = "Unknown";
-                    var gameDate = metadata.LastModified;
+                    var metadata = buildOrder.Metadata;
+                    if (metadata.Players?.Count < 2)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] StoreReplayInDatabaseAsync: Metadata incomplete, skipping");
+                        return;
+                    }
+
+                    var player1 = metadata.Players![0];
+                    var player2 = metadata.Players!.Count > 1 ? metadata.Players![1] : player1;
+                    var map = metadata.Map ?? "Unknown";
+                    var gameDate = metadata.GameDate;
 
                     // Store the replay record
+                    System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] StoreReplayInDatabaseAsync: Adding/updating replay record...");
                     var replayId = _database.AddOrUpdateReplay(
                         player1.Name,
                         player2.Name,
@@ -513,19 +677,24 @@ namespace BarcodeRevealTool.Replay
                         player1.Race,
                         player2.Race,
                         gameDate,
-                        replayFilePath
+                        replayFilePath,
+                        metadata.SC2ClientVersion,
+                        player1.PlayerId,
+                        player2.PlayerId
                     );
 
                     if (replayId > 0)
                     {
                         // Store build order entries
+                        System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] StoreReplayInDatabaseAsync: Storing {buildOrder.Entries.Count} build order entries...");
                         _database.StoreBuildOrderEntries(replayId, buildOrder.Entries);
+                        System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] StoreReplayInDatabaseAsync: Complete");
                     }
                 });
             }
             catch (Exception ex)
             {
-                // Console.WriteLine($"Error storing replay in database: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] StoreReplayInDatabaseAsync: Error - {ex.Message}");
             }
         }
     }

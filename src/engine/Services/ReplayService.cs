@@ -7,13 +7,15 @@ namespace BarcodeRevealTool.Services
 {
     /// <summary>
     /// Concrete implementation of IReplayService using BuildOrderReader and ReplayDatabase
+    /// Simplified caching: First run builds full cache, subsequent runs add missing files only.
     /// </summary>
     public class ReplayService : IReplayService
     {
         private readonly IOutputProvider _outputProvider;
         private readonly IConfiguration _configuration;
         private string CacheLockFile => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.lock");
-        private CacheManager _cacheManager = new();
+        private string CacheValidationFile => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.validation");
+        private const int CacheValidationIntervalMinutes = 60; // Re-scan for changes every 60 minutes
 
         public Action? OnCacheOperationComplete { get; set; }
 
@@ -23,195 +25,261 @@ namespace BarcodeRevealTool.Services
             _configuration = configuration;
         }
 
+        /// <summary>
+        /// Calculate optimal degree of parallelism based on system resources.
+        /// Uses CPU core count, but reserves cores for system/UI responsiveness.
+        /// </summary>
+        private int GetOptimalDegreeOfParallelism()
+        {
+            int processorCount = Environment.ProcessorCount;
+            int optimalDegree;
+
+            if (processorCount <= 2)
+            {
+                // Single or dual core: use 1 thread (don't overwhelm)
+                optimalDegree = 1;
+            }
+            else if (processorCount <= 4)
+            {
+                // 2-4 cores: use half (1-2 threads)
+                optimalDegree = Math.Max(1, processorCount / 2);
+            }
+            else if (processorCount <= 8)
+            {
+                // 4-8 cores: use 60% (better throughput)
+                optimalDegree = Math.Max(1, (processorCount * 3) / 5);
+            }
+            else if (processorCount <= 16)
+            {
+                // 8-16 cores: use 70% (aggressive but still reserves resources)
+                optimalDegree = Math.Max(1, (processorCount * 7) / 10);
+            }
+            else
+            {
+                // 16+ cores: use 75% (high parallelism)
+                optimalDegree = Math.Max(1, (processorCount * 3) / 4);
+            }
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[ReplayService] System Info - Processors: {processorCount}, " +
+                $"Optimal Parallelism: {optimalDegree}, " +
+                $"Utilization: {(optimalDegree * 100) / processorCount}%"
+            );
+
+            return optimalDegree;
+        }
+
         public async Task InitializeCacheAsync()
         {
             System.Diagnostics.Debug.WriteLine($"[ReplayService] InitializeCacheAsync started");
-            // Check if cache has already been built
-            if (File.Exists(CacheLockFile))
+
+            // Initialize database
+            BuildOrderReader.InitializeCache();
+            var database = BuildOrderReader.GetDatabase();
+            if (database == null)
             {
-                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache lock file exists, loading cached replays into memory");
-                BuildOrderReader.InitializeCache();
-
-                // Load all cached replays into memory for efficient sync
-                var database = BuildOrderReader.GetDatabase();
-                if (database != null)
-                {
-                    _cacheManager.LoadCachedFilePaths(database);
-                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Loaded {_cacheManager.CachedFileCount} cached replays into memory");
-                }
-
-                // Only sync if user has added new replays to the folder
-                // Skip sync if cache is up to date
-                await SyncReplaysFromDiskAsync();
+                _outputProvider.RenderError("Failed to initialize database");
                 return;
             }
-
-            System.Diagnostics.Debug.WriteLine($"[ReplayService] No cache lock file found, initializing cache from scratch");
-            _outputProvider.RenderCacheInitializingMessage();
-
-            // Initialize the cache/database (creates replays.db if needed)
-            BuildOrderReader.InitializeCache();
 
             var appSettings = new AppSettings();
             _configuration.GetSection("barcodeReveal").Bind(appSettings);
 
-            // On first startup: Build complete cache from all replays in folder
-            if (appSettings?.Replays?.Folder != null && Directory.Exists(appSettings.Replays.Folder))
+            if (appSettings?.Replays?.Folder == null || !Directory.Exists(appSettings.Replays.Folder))
             {
-                System.Diagnostics.Debug.WriteLine($"[ReplayService] Scanning replays folder: {appSettings.Replays.Folder}");
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Replays folder not configured or doesn't exist");
+                OnCacheOperationComplete?.Invoke();
+                return;
+            }
+
+            // Check if config has changed - force full rescan if it did
+            bool configChanged = CheckAndUpdateConfigHash(database, appSettings);
+            if (configChanged)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Configuration has changed (folder path or recursive flag), triggering full rescan");
+                // Delete cache lock and validation files to force full rescan
+                try
+                {
+                    File.Delete(CacheLockFile);
+                    File.Delete(CacheValidationFile);
+                }
+                catch { /* ignore deletion errors */ }
+            }
+
+            // Check if cache exists
+            bool cacheExists = File.Exists(CacheLockFile);
+
+            if (!cacheExists)
+            {
+                // FIRST RUN: Build complete cache from scratch
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] No cache lock file, building complete cache");
+                _outputProvider.RenderWarning("No cache found.");
+                _outputProvider.RenderCacheInitializingMessage();
+
                 var searchOption = (appSettings.Replays.Recursive == true)
                     ? SearchOption.AllDirectories
                     : SearchOption.TopDirectoryOnly;
 
-                var replayFiles = Directory.GetFiles(
+                var allReplayFiles = Directory.GetFiles(
                     appSettings.Replays.Folder,
                     "*.SC2Replay",
                     searchOption);
 
-                System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {replayFiles.Length} replay files");
-                if (replayFiles.Length > 0)
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {allReplayFiles.Length} replay files on disk");
+
+                if (allReplayFiles.Length > 0)
                 {
-                    // Use parallel processing with bounded concurrency (4 concurrent decoders)
-                    int maxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2);
-                    var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
-                    var database = BuildOrderReader.GetDatabase();
+                    _outputProvider.RenderWarning($"{allReplayFiles.Length} replays found.");
+                    await ProcessReplaysAsync(database, allReplayFiles, allReplayFiles.Length);
+                    _outputProvider.RenderCacheComplete();
+                }
 
-                    var tasks = new List<Task>();
-                    int processedCount = 0;
-                    var lockObj = new object();
+                // Create cache lock file and validation marker
+                File.WriteAllText(CacheLockFile, DateTime.UtcNow.ToString("O"));
+                UpdateCacheValidationTime();
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache build complete, lock file created");
+            }
+            else
+            {
+                // SUBSEQUENT RUNS: Check if we need to re-scan for new files
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache lock file exists");
 
-                    // Scan ALL replays to build complete cache on first startup
-                    // No database checks - we're building from scratch into empty database
-                    foreach (var replayFile in replayFiles)
+                bool shouldRescan = ShouldRescanForChanges();
+
+                if (shouldRescan)
+                {
+                    // Only scan if validation interval has passed
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache validation interval exceeded, checking for missing files");
+
+                    var searchOption = (appSettings.Replays.Recursive == true)
+                        ? SearchOption.AllDirectories
+                        : SearchOption.TopDirectoryOnly;
+
+                    var allReplayFiles = Directory.GetFiles(
+                        appSettings.Replays.Folder,
+                        "*.SC2Replay",
+                        searchOption);
+
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {allReplayFiles.Length} replay files on disk");
+
+                    var missingFiles = database.GetMissingReplayFiles(allReplayFiles);
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {missingFiles.Count} missing replay files");
+
+                    if (missingFiles.Count > 0)
                     {
-                        await semaphore.WaitAsync();
-                        tasks.Add(Task.Run(async () =>
-                        {
-                            try
-                            {
-                                System.Diagnostics.Debug.WriteLine($"[ReplayService] Processing replay: {Path.GetFileName(replayFile)}");
-                                var metadata = BuildOrderReader.GetReplayMetadataFast(replayFile);
-
-                                if (metadata != null && database != null)
-                                {
-                                    // Direct insert - skip CacheMetadata's GetReplayByFilePath check
-                                    // since database is empty on first run
-                                    database.AddOrUpdateReplay(
-                                        metadata.Players.Count > 0 ? metadata.Players[0].Name : string.Empty,
-                                        metadata.Players.Count > 1 ? metadata.Players[1].Name : string.Empty,
-                                        !string.IsNullOrEmpty(metadata.Map) ? metadata.Map : "Unknown",
-                                        metadata.Players.Count > 0 ? metadata.Players[0].Race : string.Empty,
-                                        metadata.Players.Count > 1 ? metadata.Players[1].Race : string.Empty,
-                                        metadata.GameDate,
-                                        metadata.FilePath,
-                                        metadata.SC2ClientVersion,
-                                        metadata.Players.Count > 0 ? metadata.Players[0].PlayerId : null,
-                                        metadata.Players.Count > 1 ? metadata.Players[1].PlayerId : null
-                                    );
-
-                                    // Add to in-memory cache
-                                    _cacheManager.AddCachedFile(metadata.FilePath);
-                                }
-
-                                lock (lockObj)
-                                {
-                                    processedCount++;
-                                    _outputProvider.RenderCacheProgress(processedCount, replayFiles.Length);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"[ReplayService] Error processing replay: {ex}");
-                                _outputProvider.RenderWarning($"Failed to cache {Path.GetFileName(replayFile)}: {ex.Message}");
-                            }
-                            finally
-                            {
-                                semaphore.Release();
-                            }
-                        }));
+                        _outputProvider.RenderCacheSyncMessage();
+                        await ProcessReplaysAsync(database, missingFiles.ToArray(), missingFiles.Count);
+                        _outputProvider.RenderSyncComplete(missingFiles.Count);
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ReplayService] No new files, cache is current");
                     }
 
-                    // Wait for all tasks to complete
-                    await Task.WhenAll(tasks);
-                    _outputProvider.RenderCacheComplete();
+                    // Update validation time after check
+                    UpdateCacheValidationTime();
+                }
+                else
+                {
+                    // Cache was recently validated, skip disk scan entirely
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache recently validated, skipping disk scan (instant startup)");
                 }
             }
 
-            // Create cache lock file to prevent re-scanning on future startups
-            // This ensures full cache is only built once on first startup
-            File.WriteAllText(CacheLockFile, DateTime.UtcNow.ToString("O"));
-            System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache initialization complete, lock file created");
-
-            // Notify that cache operation is complete so UI can refresh
             OnCacheOperationComplete?.Invoke();
         }
 
-        public async Task SyncReplaysFromDiskAsync()
+        /// <summary>
+        /// Check if cache validation interval has passed.
+        /// Returns true if we should re-scan disk for changes, false if cache is fresh enough.
+        /// </summary>
+        private bool ShouldRescanForChanges()
         {
-            System.Diagnostics.Debug.WriteLine($"[ReplayService] SyncReplaysFromDiskAsync started");
-            var appSettings = new AppSettings();
-            _configuration.GetSection("barcodeReveal").Bind(appSettings);
-
-            if (appSettings?.Replays?.Folder == null)
+            if (!File.Exists(CacheValidationFile))
             {
-                System.Diagnostics.Debug.WriteLine($"[ReplayService] Replays folder not configured");
-                OnCacheOperationComplete?.Invoke();
-                return;
+                // No validation file exists yet, should scan
+                return true;
             }
 
-            System.Diagnostics.Debug.WriteLine($"[ReplayService] Scanning folder: {appSettings.Replays.Folder}");
-            var searchOption = (appSettings.Replays.Recursive == true)
-                ? SearchOption.AllDirectories
-                : SearchOption.TopDirectoryOnly;
-
-            var allReplayFiles = Directory.GetFiles(
-                appSettings.Replays.Folder,
-                "*.SC2Replay",
-                searchOption);
-
-            System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {allReplayFiles.Length} replay files on disk");
-            var database = BuildOrderReader.GetDatabase();
-            if (database == null)
+            try
             {
-                System.Diagnostics.Debug.WriteLine($"[ReplayService] Database is null");
-                OnCacheOperationComplete?.Invoke();
-                return;
+                var content = File.ReadAllText(CacheValidationFile);
+                if (DateTime.TryParse(content, out var lastValidationTime))
+                {
+                    var timeSinceValidation = DateTime.UtcNow - lastValidationTime;
+                    bool shouldRescan = timeSinceValidation.TotalMinutes >= CacheValidationIntervalMinutes;
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache last validated {timeSinceValidation.TotalMinutes:F1} minutes ago (rescan interval: {CacheValidationIntervalMinutes}m) - Should rescan: {shouldRescan}");
+                    return shouldRescan;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Error reading validation time: {ex}");
+                return true;
             }
 
-            // Get list of NEW replay files (on disk but not in cache)
-            var newReplayFiles = _cacheManager.GetNewReplayFiles(allReplayFiles);
+            return true;
+        }
 
-            System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {newReplayFiles.Count} new replay files to add");
-
-            if (newReplayFiles.Count == 0)
+        /// <summary>
+        /// Update the cache validation timestamp.
+        /// This prevents costly re-scans if tool is restarted within the validation interval.
+        /// </summary>
+        private void UpdateCacheValidationTime()
+        {
+            try
             {
-                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache is up to date, no new replays to process");
-                OnCacheOperationComplete?.Invoke();
-                return;
+                File.WriteAllText(CacheValidationFile, DateTime.UtcNow.ToString("O"));
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache validation time updated");
             }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Error updating validation time: {ex}");
+            }
+        }
 
-            // Show sync progress message only if there are new files
-            _outputProvider.RenderCacheSyncMessage();
+        /// <summary>
+        /// Process replays in parallel using optimal system resources.
+        /// Loads all replay metadata into memory first for maximum performance.
+        /// </summary>
+        private async Task ProcessReplaysAsync(ReplayDatabase database, string[] replayFiles, int totalCount)
+        {
+            int maxDegreeOfParallelism = GetOptimalDegreeOfParallelism();
 
-            // Use parallel processing with bounded concurrency
-            int maxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2);
+            System.Diagnostics.Debug.WriteLine(
+                $"[ReplayService] Starting cache build with {replayFiles.Length} files, " +
+                $"{maxDegreeOfParallelism} parallel threads"
+            );
+
+            // Stage 1: Load all replay metadata into memory (fast sequential scan)
+            System.Diagnostics.Debug.WriteLine(
+                $"[ReplayService] Stage 1: Loading {replayFiles.Length} replay metadata into memory..."
+            );
+            var replayMetadataList = await LoadReplayMetadataAsync(replayFiles);
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[ReplayService] Stage 1 complete: Loaded {replayMetadataList.Count} replay metadata into memory"
+            );
+
+            // Stage 2: Process loaded metadata in parallel for database insertion
+            System.Diagnostics.Debug.WriteLine(
+                $"[ReplayService] Stage 2: Starting parallel database inserts with {maxDegreeOfParallelism} threads..."
+            );
+            _outputProvider.RenderWarning($"Processing {totalCount} replays with {maxDegreeOfParallelism} parallel threads...");
+
             var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
             var tasks = new List<Task>();
             int processedCount = 0;
-            int newReplaysAdded = 0;
             var lockObj = new object();
 
-            // Process only NEW replay files (skip all cached ones)
-            foreach (var replayFile in newReplayFiles)
+            foreach (var (filePath, metadata) in replayMetadataList)
             {
-                System.Diagnostics.Debug.WriteLine($"[ReplayService] Queuing new replay: {Path.GetFileName(replayFile)}");
                 await semaphore.WaitAsync();
                 tasks.Add(Task.Run(async () =>
                 {
                     try
                     {
-                        var metadata = BuildOrderReader.GetReplayMetadataFast(replayFile);
-                        if (metadata != null && database != null)
+                        if (metadata != null)
                         {
                             database.AddOrUpdateReplay(
                                 metadata.Players.Count > 0 ? metadata.Players[0].Name : string.Empty,
@@ -225,52 +293,153 @@ namespace BarcodeRevealTool.Services
                                 metadata.Players.Count > 0 ? metadata.Players[0].PlayerId : null,
                                 metadata.Players.Count > 1 ? metadata.Players[1].PlayerId : null
                             );
-                            
-                            _cacheManager.AddCachedFile(metadata.FilePath);
-                            System.Diagnostics.Debug.WriteLine($"[ReplayService] Replay added to cache: {Path.GetFileName(replayFile)}");
-                            
-                            lock (lockObj)
-                            {
-                                newReplaysAdded++;
-                            }
                         }
                     }
                     catch (Exception ex)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[ReplayService] Error syncing replay: {ex}");
-                        _outputProvider.RenderWarning($"Failed to sync {Path.GetFileName(replayFile)}: {ex.Message}");
+                        System.Diagnostics.Debug.WriteLine($"[ReplayService] Error processing replay: {ex}");
+                        _outputProvider.RenderWarning($"Failed to cache {Path.GetFileName(filePath)}: {ex.Message}");
                     }
                     finally
                     {
                         lock (lockObj)
                         {
                             processedCount++;
-                            _outputProvider.RenderCacheProgress(processedCount, newReplayFiles.Count);
+                            _outputProvider.RenderCacheProgress(processedCount, totalCount);
                         }
                         semaphore.Release();
                     }
                 }));
             }
 
-            // Wait for all tasks to complete
             if (tasks.Count > 0)
             {
                 await Task.WhenAll(tasks);
             }
 
-            if (newReplaysAdded > 0)
+            // Print newline after progress bar completes
+            System.Console.WriteLine();
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache processing complete. Processed {processedCount} of {totalCount} replays");
+        }
+
+        /// <summary>
+        /// Load replay metadata into memory (Stage 1).
+        /// Sequentially reads all replay files and extracts metadata.
+        /// This is fast and done before parallel processing for better resource management.
+        /// </summary>
+        private async Task<List<(string filePath, ReplayMetadata? metadata)>> LoadReplayMetadataAsync(string[] replayFiles)
+        {
+            var metadataList = new List<(string, ReplayMetadata?)>();
+            int loadedCount = 0;
+
+            _outputProvider.RenderWarning("Copying replays to memory...");
+
+            await Task.Run(() =>
             {
-                _outputProvider.RenderSyncComplete(newReplaysAdded);
+                foreach (var replayFile in replayFiles)
+                {
+                    try
+                    {
+                        var metadata = BuildOrderReader.GetReplayMetadataFast(replayFile);
+                        metadataList.Add((replayFile, metadata));
+                        loadedCount++;
+
+                        // Show progress bar for metadata loading
+                        if (loadedCount % 5 == 0 || loadedCount == replayFiles.Length)
+                        {
+                            double percent = (double)loadedCount / replayFiles.Length;
+                            int barLength = 20;
+                            int filledLength = (int)(barLength * percent);
+                            string bar = new string('█', filledLength) + new string('░', barLength - filledLength);
+                            string progressText = $"▓ {loadedCount}/{replayFiles.Length} {bar} {(percent * 100):F0}%";
+
+                            System.Console.Write($"\r[!] Copying: {progressText,-75}");
+                            System.Console.Out.Flush();
+                        }
+
+                        // Log progress every 100 files
+                        if (loadedCount % 100 == 0)
+                        {
+                            System.Diagnostics.Debug.WriteLine(
+                                $"[ReplayService] Loaded {loadedCount}/{replayFiles.Length} replay metadata into memory"
+                            );
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[ReplayService] Error loading metadata for {Path.GetFileName(replayFile)}: {ex.Message}"
+                        );
+                        metadataList.Add((replayFile, null));
+                    }
+                }
+            });
+
+            System.Console.WriteLine();  // Newline after progress bar
+            _outputProvider.RenderWarning($"Copied {loadedCount} replays to memory.");
+
+            return metadataList;
+        }
+        public async Task SyncReplaysFromDiskAsync()
+        {
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] SyncReplaysFromDiskAsync started");
+
+            // Skip disk scan if cache was recently validated
+            if (!ShouldRescanForChanges())
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache recently validated, skipping disk scan for sync");
+                return;
             }
 
-            System.Diagnostics.Debug.WriteLine($"[ReplayService] Sync complete, added {newReplaysAdded} new replays");
+            var appSettings = new AppSettings();
+            _configuration.GetSection("barcodeReveal").Bind(appSettings);
 
-            // Notify that cache operation is complete so UI can refresh
-            OnCacheOperationComplete?.Invoke();
+            if (appSettings?.Replays?.Folder == null || !Directory.Exists(appSettings.Replays.Folder))
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Replays folder not configured or doesn't exist");
+                return;
+            }
+
+            // Get all replay files from disk
+            var searchOption = (appSettings.Replays.Recursive == true)
+                ? SearchOption.AllDirectories
+                : SearchOption.TopDirectoryOnly;
+
+            var allReplayFiles = Directory.GetFiles(
+                appSettings.Replays.Folder,
+                "*.SC2Replay",
+                searchOption);
+
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {allReplayFiles.Length} replay files on disk");
+
+            var database = BuildOrderReader.GetDatabase();
+            if (database == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Failed to get database");
+                return;
+            }
+
+            // Get only missing files (using efficient database query)
+            var missingFiles = database.GetMissingReplayFiles(allReplayFiles);
+            System.Diagnostics.Debug.WriteLine($"[ReplayService] Found {missingFiles.Count} missing replay files");
+
+            if (missingFiles.Count == 0)
+            {
+                // Cache is current, nothing to sync
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache is current, no syncing needed");
+                UpdateCacheValidationTime();
+                return;
+            }
+
+            // Show sync message and process only the missing files
+            _outputProvider.RenderCacheSyncMessage();
+            await ProcessReplaysAsync(database, missingFiles.ToArray(), missingFiles.Count);
+            _outputProvider.RenderSyncComplete(missingFiles.Count);
+            UpdateCacheValidationTime();
         }        /// <summary>
-        /// Save a single replay to the database without scanning the folder.
-        /// Called when exiting a game to save the replay that just finished playing.
-        /// </summary>
+                 /// Save a single replay to the database without scanning the folder.
+                 /// Called when exiting a game to save the replay that just finished playing.
+                 /// </summary>
         public async Task SaveReplayToDbAsync(string replayFilePath)
         {
             System.Diagnostics.Debug.WriteLine($"[ReplayService] SaveReplayToDbAsync: {Path.GetFileName(replayFilePath)}");
@@ -333,5 +502,95 @@ namespace BarcodeRevealTool.Services
                 return new List<(string, DateTime, string, string, string, string)>();
             }
         }
+
+        public List<(string yourName, string opponentName, string yourRace, string opponentRace, DateTime gameDate, string map)>
+            GetGamesByOpponentId(string yourPlayerId, string opponentPlayerId, int limit = 100)
+        {
+            try
+            {
+                var database = new ReplayDatabase();
+                return database.GetGamesByOpponentId(yourPlayerId, opponentPlayerId, limit);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Error getting games by opponent ID: {ex}");
+                return new List<(string, string, string, string, DateTime, string)>();
+            }
+        }
+
+        public List<(double timeSeconds, string kind, string name)>?
+            GetOpponentLastBuildOrder(string opponentPlayerId, int limit = 20)
+        {
+            try
+            {
+                var database = new ReplayDatabase();
+                return database.GetOpponentLastBuildOrder(opponentPlayerId, limit);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Error getting opponent's last build order: {ex}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Generate SHA256 hash of config settings (folder path + recursive flag).
+        /// Used to detect when configuration has changed and trigger cache rescan.
+        /// </summary>
+        private string GenerateConfigHash(AppSettings appSettings)
+        {
+            var configString = $"{appSettings.Replays?.Folder}|{appSettings.Replays?.Recursive ?? false}";
+            using (var sha256 = System.Security.Cryptography.SHA256.Create())
+            {
+                var hashedBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(configString));
+                return Convert.ToHexString(hashedBytes);
+            }
+        }
+
+        /// <summary>
+        /// Check if configuration has changed since last run.
+        /// Returns true if config differs (triggering full rescan), false if same.
+        /// Updates stored hash if config is current.
+        /// </summary>
+        private bool CheckAndUpdateConfigHash(ReplayDatabase database, AppSettings appSettings)
+        {
+            try
+            {
+                var currentHash = GenerateConfigHash(appSettings);
+                var folderPath = appSettings.Replays?.Folder ?? string.Empty;
+                var recursive = appSettings.Replays?.Recursive ?? false;
+
+                var storedMetadata = database.GetConfigMetadata();
+
+                if (storedMetadata == null)
+                {
+                    // First run - store current config
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] First run - storing initial config hash");
+                    database.UpdateConfigMetadata(currentHash, folderPath, recursive);
+                    return false;
+                }
+
+                if (storedMetadata.Value.hash != currentHash)
+                {
+                    // Config changed - update stored hash
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Config changed! Old hash: {storedMetadata.Value.hash}, New hash: {currentHash}");
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Old folder: {storedMetadata.Value.folderPath}, New folder: {folderPath}");
+                    System.Diagnostics.Debug.WriteLine($"[ReplayService] Old recursive: {storedMetadata.Value.recursive}, New recursive: {recursive}");
+
+                    database.UpdateConfigMetadata(currentHash, folderPath, recursive);
+                    return true; // Signal that config changed
+                }
+
+                // Config unchanged
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Config unchanged - no rescan needed");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Error checking config hash: {ex}");
+                return false; // Don't trigger rescan on error
+            }
+        }
     }
 }
+

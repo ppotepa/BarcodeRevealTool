@@ -41,7 +41,16 @@ namespace BarcodeRevealTool.ConsoleApp
                 outputProvider.HandlePeriodicStateUpdate(args.CurrentState.ToString(), args.CurrentLobby);
             };
 
-            await engine.Run();
+            // Run the game engine directly on the main thread
+            try
+            {
+                await engine.Run();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Program] Error in game engine: {ex}");
+                outputProvider.RenderError($"Engine error: {ex.Message}");
+            }
         }
     }
 }

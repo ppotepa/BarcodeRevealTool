@@ -89,13 +89,14 @@ namespace BarcodeRevealTool.Game
                     lobby.OppositeTeam
                 );
 
-                // Get the last entry from the build order
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Build order has {buildOrder.Entries.Count} entries");
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Finding last entry via OrderByDescending...");
                 var lastEntry = buildOrder.Entries
                     .OrderByDescending(e => e.TimeSeconds)
                     .FirstOrDefault();
 
                 lobby.LastBuildOrderEntry = lastEntry;
-                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Build order populated, lastEntry: {lastEntry?.TimeSeconds}s");
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Build order populated, lastEntry: {lastEntry?.Name} @ {lastEntry?.TimeSeconds}s");
             }
             catch (OperationCanceledException)
             {
@@ -135,23 +136,60 @@ namespace BarcodeRevealTool.Game
             System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] CreateTeam {teamName}: nameIdx={nameMatchIndex}, tagIdx={tagMatchIndex}");
             System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Match[{nameMatchIndex}]={playerMatches[nameMatchIndex].Value}, Match[{tagMatchIndex}]={playerMatches[tagMatchIndex].Value}");
 
+            // Extract raw nickname and normalize it (replace _ with # for display)
+            var rawNickName = playerMatches[nameMatchIndex].Groups["name"].Value;
+            var displayNickName = rawNickName.Replace('_', '#');
+
             var player = new Player
             {
-                NickName = playerMatches[nameMatchIndex].Groups["name"].Value,
+                NickName = displayNickName,
                 Tag = playerMatches[tagMatchIndex].Groups["name"].Value
             };
 
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Created player: NickName={player.NickName}, Tag={player.Tag}");
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Created player: NickName={player.NickName} (raw: {rawNickName}), Tag={player.Tag}");
 
             return new(teamName) { Players = [player] };
         }
 
         private Team FindTeam(Team? team1, Team? team2, string userBattleTag, bool isUsers)
         {
-            var hasUser = (Team? team) => team?.Players.Any(p => p.Tag == userBattleTag) ?? false;
+            if (string.IsNullOrEmpty(userBattleTag))
+            {
+                // Fallback if no user tag - return first team
+                return isUsers ? team1! : team2!;
+            }
 
-            var userTeam = hasUser(team1) ? team1 : team2;
+            // Extract the name prefix from the detected user account (e.g., "Ignacy" from "Ignacy_236")
+            string? namePrefix = ExtractNamePrefix(userBattleTag);
+            string displayBattleTag = userBattleTag.Replace('_', '#');
+
+            // Check if user is in team1 - match by exact tag, display tag, or name prefix
+            var userInTeam1 = team1?.Players.Any(p =>
+                p.Tag.Equals(userBattleTag, StringComparison.OrdinalIgnoreCase) ||
+                p.Tag.Equals(displayBattleTag, StringComparison.OrdinalIgnoreCase) ||
+                p.NickName.Equals(displayBattleTag, StringComparison.OrdinalIgnoreCase) ||
+                (namePrefix != null && p.NickName.StartsWith(namePrefix, StringComparison.OrdinalIgnoreCase))) ?? false;
+
+            var userTeam = userInTeam1 ? team1 : team2;
             return isUsers ? userTeam! : (userTeam == team1 ? team2 : team1)!;
+        }
+
+        /// <summary>
+        /// Extract the name prefix from a battle tag.
+        /// Example: "Ignacy_236" → "Ignacy"
+        /// </summary>
+        private static string? ExtractNamePrefix(string battleTag)
+        {
+            if (string.IsNullOrEmpty(battleTag))
+                return null;
+
+            var underscoreIndex = battleTag.IndexOf('_');
+            if (underscoreIndex > 0)
+            {
+                return battleTag.Substring(0, underscoreIndex);
+            }
+
+            return null;
         }
     }
 }

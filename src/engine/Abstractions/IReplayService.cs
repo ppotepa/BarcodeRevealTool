@@ -26,5 +26,18 @@ namespace BarcodeRevealTool.Engine.Abstractions
         /// </summary>
         List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName)>
             GetOpponentMatchHistory(string yourPlayerName, string opponentName, int limit = 10);
+
+        /// <summary>
+        /// Get all games against a specific opponent by their player ID.
+        /// Returns games with player races to determine win/loss.
+        /// </summary>
+        List<(string yourName, string opponentName, string yourRace, string opponentRace, DateTime gameDate, string map)>
+            GetGamesByOpponentId(string yourPlayerId, string opponentPlayerId, int limit = 100);
+
+        /// <summary>
+        /// Get the most recent cached build order for a specific opponent.
+        /// </summary>
+        List<(double timeSeconds, string kind, string name)>?
+            GetOpponentLastBuildOrder(string opponentPlayerId, int limit = 20);
     }
 }

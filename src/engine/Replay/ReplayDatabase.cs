@@ -1,4 +1,5 @@
 using System.Data.SQLite;
+using System.Reflection;
 
 namespace BarcodeRevealTool.Replay
 {
@@ -8,7 +9,7 @@ namespace BarcodeRevealTool.Replay
     public class ReplayDatabase
     {
         private readonly string _databasePath;
-        private const string DatabaseFileName = "replays.db";
+        private const string DatabaseFileName = "cache.db";
 
         public ReplayDatabase(string? customPath = null)
         {
@@ -29,65 +30,19 @@ namespace BarcodeRevealTool.Replay
             connection.Open();
 
             using var command = connection.CreateCommand();
-            // Read and execute the schema from schema.sqlite file
-            var schemaPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "replay", "sql", "schema.sqlite");
+            // Read and execute the schema from embedded resource
+            var assembly = Assembly.GetExecutingAssembly();
+            var resourceName = "BarcodeRevealTool.Engine.Replay.sql.schema.sqlite";
 
-            if (File.Exists(schemaPath))
+            using var stream = assembly.GetManifestResourceStream(resourceName);
+            if (stream == null)
             {
-                var schemaSql = File.ReadAllText(schemaPath);
-                command.CommandText = schemaSql;
-                command.ExecuteNonQuery();
+                throw new FileNotFoundException($"Embedded resource not found: {resourceName}");
             }
-            else
-            {
-                // Fallback: create tables directly if schema file not found
-                CreateTablesDirectly(connection);
-            }
-        }
 
-        private static void CreateTablesDirectly(SQLiteConnection connection)
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = @"
-                CREATE TABLE IF NOT EXISTS Replays (
-                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ReplayGuid TEXT NOT NULL UNIQUE,
-                    Player1 TEXT NOT NULL,
-                    Player2 TEXT NOT NULL,
-                    Map TEXT NOT NULL,
-                    Race1 TEXT NOT NULL,
-                    Race2 TEXT NOT NULL,
-                    GameDate TEXT NOT NULL,
-                    ReplayFilePath TEXT NOT NULL UNIQUE,
-                    FileHash TEXT NOT NULL,
-                    SC2ClientVersion TEXT,
-                    BuildOrderCached INTEGER DEFAULT 0,
-                    CachedAt TEXT,
-                    CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    UpdatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                );
-
-                CREATE TABLE IF NOT EXISTS BuildOrderEntries (
-                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ReplayId INTEGER NOT NULL,
-                    PlayerId INTEGER NOT NULL,
-                    TimeSeconds REAL NOT NULL,
-                    Kind TEXT NOT NULL,
-                    Name TEXT NOT NULL,
-                    FOREIGN KEY (ReplayId) REFERENCES Replays(Id) ON DELETE CASCADE
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_Replays_ReplayGuid ON Replays(ReplayGuid);
-                CREATE INDEX IF NOT EXISTS idx_Replays_Player1 ON Replays(Player1);
-                CREATE INDEX IF NOT EXISTS idx_Replays_Player2 ON Replays(Player2);
-                CREATE INDEX IF NOT EXISTS idx_Replays_Map ON Replays(Map);
-                CREATE INDEX IF NOT EXISTS idx_Replays_GameDate ON Replays(GameDate);
-                CREATE INDEX IF NOT EXISTS idx_Replays_ReplayFilePath ON Replays(ReplayFilePath);
-                CREATE INDEX IF NOT EXISTS idx_Replays_BuildOrderCached ON Replays(BuildOrderCached);
-                CREATE INDEX IF NOT EXISTS idx_Replays_SC2ClientVersion ON Replays(SC2ClientVersion);
-                CREATE INDEX IF NOT EXISTS idx_BuildOrderEntries_ReplayId ON BuildOrderEntries(ReplayId);
-                CREATE INDEX IF NOT EXISTS idx_BuildOrderEntries_PlayerId ON BuildOrderEntries(PlayerId);
-            ";
+            using var reader = new StreamReader(stream);
+            var schemaSql = reader.ReadToEnd();
+            command.CommandText = schemaSql;
             command.ExecuteNonQuery();
         }
 
@@ -408,6 +363,207 @@ namespace BarcodeRevealTool.Replay
         }
 
         /// <summary>
+        /// Get all games against a specific opponent by their player ID.
+        /// Returns games with player races to determine win/loss.
+        /// </summary>
+        public List<(string, string, string, string, DateTime, string)>
+            GetGamesByOpponentId(string yourPlayerId, string opponentPlayerId, int limit = 100)
+        {
+            var games = new List<(string, string, string, string, DateTime, string)>();
+
+            // Normalize player IDs to handle both formats (with and without region prefix)
+            string normalizedYourId = BuildOrderReader.NormalizeToonHandle(yourPlayerId);
+            string normalizedOpponentId = BuildOrderReader.NormalizeToonHandle(opponentPlayerId);
+
+            // Extract the last bit for LIKE fallback queries
+            string? yourIdLastBit = BuildOrderReader.ExtractToonHandleLastBit(yourPlayerId);
+            string? opponentIdLastBit = BuildOrderReader.ExtractToonHandleLastBit(opponentPlayerId);
+
+            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetGamesByOpponentId] yourPlayerId={yourPlayerId}, normalized={normalizedYourId}, lastBit={yourIdLastBit}");
+            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetGamesByOpponentId] opponentPlayerId={opponentPlayerId}, normalized={normalizedOpponentId}, lastBit={opponentIdLastBit}");
+
+            try
+            {
+                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+                connection.Open();
+
+                using var command = connection.CreateCommand();
+                command.CommandText = @"
+                    SELECT Player1, Player2, Race1, Race2, GameDate, Map, Player1Id, Player2Id
+                    FROM Replays
+                    WHERE (Player1Id = @YourId AND Player2Id = @OpponentId)
+                       OR (Player2Id = @YourId AND Player1Id = @OpponentId)
+                       OR (Player1Id LIKE ('%' || @YourIdLastBit || '%') AND Player2Id LIKE ('%' || @OpponentIdLastBit || '%'))
+                       OR (Player2Id LIKE ('%' || @YourIdLastBit || '%') AND Player1Id LIKE ('%' || @OpponentIdLastBit || '%'))
+                    ORDER BY GameDate DESC
+                    LIMIT @Limit
+                ";
+                command.Parameters.AddWithValue("@YourId", normalizedYourId);
+                command.Parameters.AddWithValue("@OpponentId", normalizedOpponentId);
+                command.Parameters.AddWithValue("@YourIdLastBit", yourIdLastBit ?? string.Empty);
+                command.Parameters.AddWithValue("@OpponentIdLastBit", opponentIdLastBit ?? string.Empty);
+                command.Parameters.AddWithValue("@Limit", limit);
+
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    var player1 = reader["Player1"].ToString() ?? string.Empty;
+                    var player2 = reader["Player2"].ToString() ?? string.Empty;
+                    var race1 = reader["Race1"].ToString() ?? string.Empty;
+                    var race2 = reader["Race2"].ToString() ?? string.Empty;
+                    var gameDate = DateTime.Parse(reader["GameDate"].ToString() ?? DateTime.MinValue.ToString("O"));
+                    var map = reader["Map"].ToString() ?? string.Empty;
+                    var player1Id = reader["Player1Id"].ToString() ?? string.Empty;
+
+                    // Determine which player is "you"
+                    string yourName, opponentName, yourRace, opponentRaceInMatch;
+
+                    string normalizedPlayer1Id = BuildOrderReader.NormalizeToonHandle(player1Id);
+                    if (normalizedPlayer1Id == normalizedYourId)
+                    {
+                        yourName = player1;
+                        opponentName = player2;
+                        yourRace = race1;
+                        opponentRaceInMatch = race2;
+                    }
+                    else
+                    {
+                        yourName = player2;
+                        opponentName = player1;
+                        yourRace = race2;
+                        opponentRaceInMatch = race1;
+                    }
+
+                    games.Add((yourName, opponentName, yourRace, opponentRaceInMatch, gameDate, map));
+                }
+
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetGamesByOpponentId] Found {games.Count} games");
+            }
+            catch (Exception ex)
+            {
+                // Console.WriteLine($"Error retrieving games by opponent ID: {ex.Message}");
+            }
+
+            return games;
+        }
+
+        /// <summary>
+        /// Get the most recent cached build order for a specific opponent.
+        /// </summary>
+        public List<(double timeSeconds, string kind, string name)>? GetOpponentLastBuildOrder(string opponentPlayerId, int limit = 20)
+        {
+            try
+            {
+                // Normalize player ID to handle both formats
+                string normalizedOpponentId = BuildOrderReader.NormalizeToonHandle(opponentPlayerId);
+                string? opponentIdLastBit = BuildOrderReader.ExtractToonHandleLastBit(opponentPlayerId);
+
+                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+                connection.Open();
+
+                using var command = connection.CreateCommand();
+                command.CommandText = @"
+                    SELECT boe.TimeSeconds, boe.Kind, boe.Name
+                    FROM BuildOrderEntries boe
+                    INNER JOIN Replays r ON boe.ReplayId = r.Id
+                    WHERE (r.Player1Id = @OpponentId OR r.Player2Id = @OpponentId
+                           OR r.Player1Id LIKE '%' || @OpponentIdLastBit OR r.Player2Id LIKE '%' || @OpponentIdLastBit)
+                      AND r.BuildOrderCached = 1
+                    ORDER BY r.GameDate DESC
+                    LIMIT @Limit
+                ";
+                command.Parameters.AddWithValue("@OpponentId", normalizedOpponentId);
+                command.Parameters.AddWithValue("@OpponentIdLastBit", opponentIdLastBit ?? string.Empty);
+                command.Parameters.AddWithValue("@Limit", limit);
+
+                var buildOrders = new List<(double, string, string)>();
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    buildOrders.Add((
+                        Convert.ToDouble(reader["TimeSeconds"]),
+                        reader["Kind"].ToString() ?? string.Empty,
+                        reader["Name"].ToString() ?? string.Empty
+                    ));
+                }
+
+                return buildOrders.Count > 0 ? buildOrders : null;
+            }
+            catch (Exception ex)
+            {
+                // Console.WriteLine($"Error retrieving opponent's last build order: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Get stored config metadata (hash, folder path, recursive flag, last validated timestamp).
+        /// Returns null if no config has been stored yet.
+        /// </summary>
+        public (string hash, string folderPath, bool recursive, string lastValidated)? GetConfigMetadata()
+        {
+            try
+            {
+                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+                connection.Open();
+
+                using var command = connection.CreateCommand();
+                command.CommandText = @"
+                    SELECT ConfigHash, ReplayFolderPath, RecursiveScan, LastValidated
+                    FROM ConfigMetadata
+                    WHERE Id = 1
+                ";
+
+                using var reader = command.ExecuteReader();
+                if (reader.Read())
+                {
+                    return (
+                        reader["ConfigHash"].ToString() ?? string.Empty,
+                        reader["ReplayFolderPath"].ToString() ?? string.Empty,
+                        Convert.ToInt32(reader["RecursiveScan"]) == 1,
+                        reader["LastValidated"].ToString() ?? DateTime.UtcNow.ToString("O")
+                    );
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                // Console.WriteLine($"Error retrieving config metadata: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Store or update config metadata (hash, folder path, recursive flag).
+        /// Replaces existing metadata to maintain singleton constraint.
+        /// </summary>
+        public void UpdateConfigMetadata(string configHash, string folderPath, bool recursive)
+        {
+            try
+            {
+                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+                connection.Open();
+
+                using var command = connection.CreateCommand();
+                command.CommandText = @"
+                    INSERT OR REPLACE INTO ConfigMetadata (Id, ConfigHash, ReplayFolderPath, RecursiveScan, LastValidated)
+                    VALUES (1, @ConfigHash, @FolderPath, @Recursive, @LastValidated)
+                ";
+                command.Parameters.AddWithValue("@ConfigHash", configHash);
+                command.Parameters.AddWithValue("@FolderPath", folderPath);
+                command.Parameters.AddWithValue("@Recursive", recursive ? 1 : 0);
+                command.Parameters.AddWithValue("@LastValidated", DateTime.UtcNow.ToString("O"));
+
+                command.ExecuteNonQuery();
+            }
+            catch (Exception ex)
+            {
+                // Console.WriteLine($"Error updating config metadata: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Get all cached replay records (minimal data - just ID and filepath for cache management).
         /// Used by CacheManager to load all cached files into memory for efficient diff operations.
         /// </summary>
@@ -443,6 +599,55 @@ namespace BarcodeRevealTool.Replay
             }
 
             return replays;
+        }
+
+        /// <summary>
+        /// Get list of replay files from disk that are NOT in the database.
+        /// Returns files that need to be added to cache.
+        /// </summary>
+        public List<string> GetMissingReplayFiles(string[] allReplayFilesOnDisk)
+        {
+            var missingFiles = new List<string>();
+
+            if (allReplayFilesOnDisk.Length == 0)
+                return missingFiles;
+
+            try
+            {
+                using var connection = new SQLiteConnection($"Data Source={_databasePath};Version=3;");
+                connection.Open();
+
+                // Get all cached file paths
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT ReplayFilePath FROM Replays";
+
+                var cachedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    var path = reader["ReplayFilePath"].ToString();
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        cachedPaths.Add(path);
+                    }
+                }
+
+                // Find missing files (on disk but not in cache)
+                foreach (var filePath in allReplayFilesOnDisk)
+                {
+                    if (!cachedPaths.Contains(filePath))
+                    {
+                        missingFiles.Add(filePath);
+                    }
+                }
+            }
+            catch
+            {
+                // Fallback: return all files if query fails (safer to re-process than skip)
+                return new List<string>(allReplayFilesOnDisk);
+            }
+
+            return missingFiles;
         }
 
         /// <summary>

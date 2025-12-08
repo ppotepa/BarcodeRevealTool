@@ -1,5 +1,6 @@
 using BarcodeRevealTool.Adapters;
 using BarcodeRevealTool.Engine.Abstractions;
+using BarcodeRevealTool.Engine.Replay;
 using BarcodeRevealTool.Game;
 using BarcodeRevealTool.Services;
 using Microsoft.Extensions.Configuration;
@@ -32,6 +33,11 @@ namespace BarcodeRevealTool.Engine.Extensions
 
             // Game logic
             services.AddScoped<GameLobbyFactory>();
+
+            // Database and queries
+            services.AddScoped<IReplayQueryService, ReplayQueryService>();
+            services.AddScoped<IBuildOrderCacheManager, BuildOrderCacheManager>();
+            services.AddScoped<IReplayCacheService, ReplayCacheService>();
 
             // Services
             services.AddScoped<IReplayService, ReplayService>();

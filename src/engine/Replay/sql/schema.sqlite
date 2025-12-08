@@ -32,6 +32,15 @@ CREATE TABLE IF NOT EXISTS BuildOrderEntries (
     FOREIGN KEY (ReplayId) REFERENCES Replays(Id) ON DELETE CASCADE
 );
 
+-- Configuration metadata table for tracking config changes
+CREATE TABLE IF NOT EXISTS ConfigMetadata (
+    Id INTEGER PRIMARY KEY CHECK (Id = 1),
+    ReplayFolderPath TEXT,
+    RecursiveScan INTEGER DEFAULT 1,
+    ConfigHash TEXT NOT NULL,
+    LastValidated TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes for fast lookups
 CREATE INDEX IF NOT EXISTS idx_Replays_ReplayGuid ON Replays(ReplayGuid);
 CREATE INDEX IF NOT EXISTS idx_Replays_Player1 ON Replays(Player1);

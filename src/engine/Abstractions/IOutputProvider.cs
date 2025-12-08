@@ -1,4 +1,5 @@
 using BarcodeRevealTool.game.lobbies;
+using BarcodeRevealTool.Game;
 
 namespace BarcodeRevealTool.Engine.Abstractions
 {
@@ -17,7 +18,9 @@ namespace BarcodeRevealTool.Engine.Abstractions
         void RenderSyncComplete(int newReplays);
         void RenderWarning(string message);
         void RenderError(string message);
-        void RenderLobbyInfo(ISoloGameLobby lobby, object? additionalData, object? lastBuildOrder);
+        void RenderLobbyInfo(ISoloGameLobby lobby, object? additionalData, object? lastBuildOrder, Player? opponentPlayer = null,
+            List<(string yourName, string opponentName, string yourRace, string opponentRace, DateTime gameDate, string map)>? opponentGames = null,
+            List<(double timeSeconds, string kind, string name)>? opponentLastBuild = null);
         void RenderOpponentMatchHistory(List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName)> history);
 
         /// <summary>

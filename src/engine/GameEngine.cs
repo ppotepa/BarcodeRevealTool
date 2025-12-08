@@ -1,5 +1,7 @@
 using BarcodeRevealTool.Engine.Abstractions;
+using BarcodeRevealTool.Engine.Config;
 using BarcodeRevealTool.game.lobbies;
+using BarcodeRevealTool.Game;
 using Microsoft.Extensions.Configuration;
 using Sc2Pulse;
 
@@ -33,6 +35,7 @@ namespace BarcodeRevealTool.Engine
         private readonly IGameLobbyFactory _gameLobbyFactory;
         private readonly IConfiguration _configuration;
         private readonly GameStateManager _gameStateManager = new();
+        private string? _detectedUserAccount = null;  // Auto-detected from SC2 account links
 
         public GameEngine(IConfiguration configuration, IServiceProvider services, Sc2PulseClient pulseClient, IOutputProvider outputProvider, IReplayService replayService, IGameLobbyFactory gameLobbyFactory)
         {
@@ -43,6 +46,28 @@ namespace BarcodeRevealTool.Engine
             _outputProvider = outputProvider;
             _replayService = replayService;
             _gameLobbyFactory = gameLobbyFactory;
+
+            // Auto-detect user account from SC2 link files if not configured
+            _detectedUserAccount = UserDetectionService.DetectUserAccount();
+            if (!string.IsNullOrEmpty(_detectedUserAccount))
+            {
+                System.Diagnostics.Debug.WriteLine($"[GameEngine] Auto-detected user account: {_detectedUserAccount}");
+                // Override configuration with detected account if not already set
+                if (Configuration?.User == null)
+                {
+                    Configuration ??= new AppSettings();
+                    Configuration.User ??= new User();
+                }
+                if (string.IsNullOrEmpty(Configuration.User.BattleTag))
+                {
+                    Configuration.User.BattleTag = _detectedUserAccount;
+                    System.Diagnostics.Debug.WriteLine($"[GameEngine] Set configuration user account to: {_detectedUserAccount}");
+                }
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[GameEngine] No user account detected from SC2 links");
+            }
 
             // Subscribe to game state changes
             _gameStateManager.GameProcessStateChanged += OnGameProcessStateChanged;
@@ -152,7 +177,39 @@ namespace BarcodeRevealTool.Engine
             {
                 if (_cachedLobby is not null)
                 {
-                    _outputProvider.RenderLobbyInfo(_cachedLobby, _cachedLobby.AdditionalData, _cachedLobby.LastBuildOrderEntry);
+                    // Extract opponent character ID from SC2Pulse data
+                    var opponentData = _cachedLobby.AdditionalData as Sc2Pulse.Models.LadderDistinctCharacter;
+                    var opponentCharId = opponentData?.Members?.Character?.Id.ToString();
+
+                    List<(string, string, string, string, DateTime, string)>? opponentGames = null;
+                    List<(double, string, string)>? opponentLastBuild = null;
+
+                    // Try to get our character ID from the user's team and identify opponent player
+                    string? ourCharId = null;
+                    Player? opponentPlayer = null;
+                    var usersTeamObj = _cachedLobby as GameLobby;
+                    if (usersTeamObj?.UsersTeam != null)
+                    {
+                        var ourTeam = usersTeamObj.UsersTeam.Invoke(_cachedLobby);
+                        var ourPlayer = ourTeam?.Players.FirstOrDefault();
+                        if (ourPlayer != null)
+                        {
+                            // Use battle tag as a fallback if we don't have the character ID
+                            ourCharId = ourPlayer.Tag;
+                        }
+
+                        // Get opponent from opposite team
+                        var oppositeTeam = usersTeamObj.OppositeTeam?.Invoke(_cachedLobby);
+                        opponentPlayer = oppositeTeam?.Players.FirstOrDefault();
+                    }
+
+                    if (!string.IsNullOrEmpty(opponentCharId) && !string.IsNullOrEmpty(ourCharId))
+                    {
+                        opponentGames = _replayService.GetGamesByOpponentId(ourCharId, opponentCharId, limit: 100);
+                        opponentLastBuild = _replayService.GetOpponentLastBuildOrder(opponentCharId, limit: 20);
+                    }
+
+                    _outputProvider.RenderLobbyInfo(_cachedLobby, _cachedLobby.AdditionalData, _cachedLobby.LastBuildOrderEntry, opponentPlayer, opponentGames, opponentLastBuild);
 
                     // Get and display opponent match history
                     var team1 = _cachedLobby.Team1;
@@ -337,11 +394,12 @@ namespace BarcodeRevealTool.Engine
                     System.Diagnostics.Debug.WriteLine($"[GameEngine] Lobby parsed successfully");
                     _cachedLobby = lobby as ISoloGameLobby;
 
-                    // Load opponent stats asynchronously in background
+                    // Load opponent stats - wait for completion before displaying
                     if (_cachedLobby is not null)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Starting background load of additional data");
-                        _ = _cachedLobby.EnsureAdditionalDataLoadedAsync();
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Loading additional opponent data from SC2Pulse");
+                        await _cachedLobby.EnsureAdditionalDataLoadedAsync();
+                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Additional data load complete, displaying lobby info");
                     }
 
                     DisplayCurrentState();

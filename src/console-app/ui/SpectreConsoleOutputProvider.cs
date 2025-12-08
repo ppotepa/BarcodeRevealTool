@@ -41,13 +41,19 @@ namespace BarcodeRevealTool.UI.Console
         public void RenderCacheProgress(int current, int total)
         {
             var percent = (double)current / total;
-            AnsiConsole.Markup($"\r[green]▓[/]");
-            AnsiConsole.Markup($" {current}/{total} ");
 
             int barLength = 20;
             int filledLength = (int)(barLength * percent);
             string bar = new string('█', filledLength) + new string('░', barLength - filledLength);
-            AnsiConsole.Markup($"[blue]{bar}[/] {(percent * 100):F0}%");
+
+            // Build plain text version for console output
+            string progressText = $"▓ {current}/{total} {bar} {(percent * 100):F0}%";
+
+            // Use carriage return to update on same line
+            System.Console.Write($"\r[!] Caching: {progressText,-75}");
+            System.Console.Out.Flush();
+
+            System.Diagnostics.Debug.WriteLine($"[RenderCacheProgress] {current}/{total} ({(percent * 100):F0}%)");
         }
 
         public void RenderCacheComplete()
@@ -77,10 +83,12 @@ namespace BarcodeRevealTool.UI.Console
             // Currently a no-op - can be enhanced with spinner/pulse effects while awaiting
         }
 
-        public void RenderLobbyInfo(ISoloGameLobby lobby, object? additionalData, object? lastBuildOrder)
+        public void RenderLobbyInfo(ISoloGameLobby lobby, object? additionalData, object? lastBuildOrder, Player? opponentPlayer = null,
+            List<(string yourName, string opponentName, string yourRace, string opponentRace, DateTime gameDate, string map)>? opponentGames = null,
+            List<(double timeSeconds, string kind, string name)>? opponentLastBuild = null)
         {
-            System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] RenderLobbyInfo called with lobby={lobby != null}, additionalData={additionalData != null}, lastBuildOrder={lastBuildOrder != null}");
-            System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] Team1={lobby.Team1}, Team2={lobby.Team2}");
+            System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] RenderLobbyInfo called with lobby={lobby != null}, additionalData={additionalData != null}, lastBuildOrder={lastBuildOrder != null}, opponentPlayer={opponentPlayer != null}");
+            System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] Team1={lobby?.Team1}, Team2={lobby?.Team2}");
 
             AnsiConsole.Clear();
 
@@ -89,13 +97,21 @@ namespace BarcodeRevealTool.UI.Console
             AnsiConsole.WriteLine();
 
             // Players section - safely cast object properties to Team type
-            RenderTeamInfo("Team 1", lobby.Team1 as Team);
+            RenderTeamInfo("Team 1", lobby?.Team1 as Team);
             AnsiConsole.WriteLine();
-            RenderTeamInfo("Team 2", lobby.Team2 as Team);
+            RenderTeamInfo("Team 2", lobby?.Team2 as Team);
             AnsiConsole.WriteLine();
 
             // Opponent stats
-            RenderOpponentStats(additionalData as LadderDistinctCharacter);
+            RenderOpponentStats(additionalData as LadderDistinctCharacter, opponentPlayer);
+            AnsiConsole.WriteLine();
+
+            // Opponent games vs you
+            RenderOpponentGamesStats(opponentGames);
+            AnsiConsole.WriteLine();
+
+            // Opponent's last build order
+            RenderOpponentLastBuildOrder(opponentLastBuild);
             AnsiConsole.WriteLine();
 
             // Last build order
@@ -117,7 +133,7 @@ namespace BarcodeRevealTool.UI.Console
             }
         }
 
-        private static void RenderOpponentStats(LadderDistinctCharacter? stats)
+        private static void RenderOpponentStats(LadderDistinctCharacter? stats, Player? opponentPlayer = null)
         {
             if (stats == null)
             {
@@ -125,36 +141,186 @@ namespace BarcodeRevealTool.UI.Console
                 return;
             }
 
-            AnsiConsole.MarkupLine("[bold cyan]Opponent Stats[/]");
+            AnsiConsole.MarkupLine("[bold cyan]Opponent Info[/]");
 
-            var table = new Table();
-            table.Border = TableBorder.Square;
-            table.AddColumn("[cyan]Stat[/]");
-            table.AddColumn("[cyan]Value[/]");
+            // Player Details Section
+            if (stats.Members?.Character != null)
+            {
+                var playerChar = stats.Members.Character;
+
+                // Use opponent player's nickname from lobby if available, otherwise use SC2Pulse name
+                string displayName = opponentPlayer?.NickName ?? playerChar.Name ?? "Unknown";
+                AnsiConsole.MarkupLine($"[yellow]Name:[/] {displayName}");
+
+                // Format toon handle from character data
+                // Format: region-S2-realm-id (e.g., 2-S2-1-11057632)
+                var toonHandle = $"{(int)playerChar.Region}-S2-{playerChar.Realm}-{playerChar.BattleNetId}";
+                AnsiConsole.MarkupLine($"[yellow]Toon Handle:[/] {toonHandle}");
+
+                // SC2 Profile URL
+                var profileUrl = $"https://starcraft2.com/profile/{(int)playerChar.Region}/{playerChar.Realm}/{playerChar.BattleNetId}";
+                AnsiConsole.MarkupLine($"[yellow]Profile:[/] [link]{profileUrl}[/]");
+
+                // BattleTag on SC2Pulse
+                AnsiConsole.MarkupLine($"[yellow]Character ID:[/] {playerChar.Id}");
+
+                AnsiConsole.WriteLine();
+            }
+
+            AnsiConsole.MarkupLine("[bold cyan]Statistics[/]");
+
+            var statsTable = new Table();
+            statsTable.Border = TableBorder.Square;
+            statsTable.AddColumn("[cyan]Metric[/]");
+            statsTable.AddColumn("[cyan]Value[/]");
+
+            // Current Season Stats
+            if (stats.CurrentStats?.Rating.HasValue == true && stats.CurrentStats.Rating > 0)
+            {
+                statsTable.AddRow("Current MMR", $"[green]{stats.CurrentStats.Rating}[/]");
+            }
 
             if (stats.CurrentStats?.Rank != null)
             {
-                table.AddRow("Current Rank", $"[yellow]{stats.CurrentStats.Rank}[/]");
-            }
-
-            if (stats.LeagueMax != null)
-            {
-                table.AddRow("Max Rank", $"[green]{stats.LeagueMax}[/]");
-            }
-
-            if (stats.CurrentStats?.Rating > 0)
-            {
-                table.AddRow("MMR", $"[green]{stats.CurrentStats.Rating}[/]");
+                statsTable.AddRow("Current Rank", $"[yellow]{stats.CurrentStats.Rank}[/]");
             }
 
             if (stats.CurrentStats?.GamesPlayed > 0)
             {
-                table.AddRow("Games Played", $"[yellow]{stats.CurrentStats.GamesPlayed}[/]");
+                statsTable.AddRow("Current Games", $"[cyan]{stats.CurrentStats.GamesPlayed}[/]");
             }
 
-            if (stats.Members.Character.Id > 0)
+            // Career High Stats
+            if (stats.RatingMax > 0)
             {
-                table.AddRow("User Id", $"[yellow]{stats.Members.Character.Id}[/]");
+                statsTable.AddRow("Peak MMR", $"[magenta]{stats.RatingMax}[/]");
+            }
+
+            if (stats.LeagueMax != null)
+            {
+                statsTable.AddRow("Peak League", $"[magenta]{stats.LeagueMax}[/]");
+            }
+
+            // Previous Season Stats
+            if (stats.PreviousStats?.Rating > 0)
+            {
+                statsTable.AddRow("Previous MMR", $"[grey]{stats.PreviousStats.Rating}[/]");
+            }
+
+            if (stats.PreviousStats?.Rank != null)
+            {
+                statsTable.AddRow("Previous Rank", $"[grey]{stats.PreviousStats.Rank}[/]");
+            }
+
+            if (stats.PreviousStats?.GamesPlayed > 0)
+            {
+                statsTable.AddRow("Previous Games", $"[grey]{stats.PreviousStats.GamesPlayed}[/]");
+            }
+
+            // Total Career Stats
+            if (stats.TotalGamesPlayed > 0)
+            {
+                statsTable.AddRow("Total Games (Career)", $"[blue]{stats.TotalGamesPlayed}[/]");
+            }
+
+            AnsiConsole.Write(statsTable);
+        }
+
+        private static void RenderOpponentGamesStats(List<(string yourName, string opponentName, string yourRace, string opponentRace, DateTime gameDate, string map)>? games)
+        {
+            if (games == null || games.Count == 0)
+            {
+                AnsiConsole.MarkupLine("[grey]No previous games vs opponent[/]");
+                return;
+            }
+
+            AnsiConsole.MarkupLine("[bold cyan]Head-to-Head Record[/]");
+
+            var table = new Table();
+            table.Border = TableBorder.Square;
+            table.AddColumn("[cyan]Metric[/]");
+            table.AddColumn("[cyan]Value[/]");
+
+            table.AddRow("Total Games", $"[yellow]{games.Count}[/]");
+            table.AddRow("Last Match", $"[cyan]{(int)(DateTime.Now - games.First().gameDate).TotalDays}d ago[/]");
+
+            // Show recent games
+            if (games.Count > 0)
+            {
+                var recentGame = games.First();
+                table.AddRow("Most Recent Map", $"[magenta]{EscapeMarkup(recentGame.map)}[/]");
+                table.AddRow("Your Last Race", $"[green]{EscapeMarkup(recentGame.yourRace)}[/]");
+                table.AddRow("Their Last Race", $"[magenta]{EscapeMarkup(recentGame.opponentRace)}[/]");
+            }
+
+            AnsiConsole.Write(table);
+            AnsiConsole.WriteLine();
+
+            // Show last 5 matches
+            RenderLast5Matches(games);
+        }
+
+        private static void RenderLast5Matches(List<(string yourName, string opponentName, string yourRace, string opponentRace, DateTime gameDate, string map)> games)
+        {
+            AnsiConsole.MarkupLine("[bold cyan]Last 5 Matches[/]");
+
+            var matchTable = new Table();
+            matchTable.Border = TableBorder.Square;
+            matchTable.AddColumn("[cyan]Date[/]");
+            matchTable.AddColumn("[cyan]Map[/]");
+            matchTable.AddColumn("[cyan]Your Race[/]");
+            matchTable.AddColumn("[cyan]Their Race[/]");
+            matchTable.AddColumn("[cyan]Result[/]");
+
+            var last5 = games.Take(5).ToList();
+            foreach (var game in last5)
+            {
+                var daysAgo = (int)(DateTime.Now - game.gameDate).TotalDays;
+                var dateStr = daysAgo == 0 ? "Today" : $"{daysAgo}d ago";
+
+                // For now, we'll use a placeholder "?" for result since winner info isn't in DB yet
+                // TODO: Extract winner from replay file
+                string result = "[yellow]?[/]";
+
+                matchTable.AddRow(
+                    dateStr,
+                    $"[magenta]{EscapeMarkup(game.map)}[/]",
+                    $"[green]{EscapeMarkup(game.yourRace)}[/]",
+                    $"[cyan]{EscapeMarkup(game.opponentRace)}[/]",
+                    result
+                );
+            }
+
+            AnsiConsole.Write(matchTable);
+        }
+
+        private static void RenderOpponentLastBuildOrder(List<(double timeSeconds, string kind, string name)>? buildOrder)
+        {
+            if (buildOrder == null || buildOrder.Count == 0)
+            {
+                AnsiConsole.MarkupLine("[grey]No cached build order for opponent[/]");
+                return;
+            }
+
+            AnsiConsole.MarkupLine("[bold cyan]Opponent's Last Build Order[/]");
+
+            var table = new Table();
+            table.Border = TableBorder.Square;
+            table.AddColumn("[cyan]Time[/]");
+            table.AddColumn("[cyan]Type[/]");
+            table.AddColumn("[cyan]Building/Unit[/]");
+
+            // Show up to first 10 build order items
+            foreach (var entry in buildOrder.Take(10))
+            {
+                var timeSpan = TimeSpan.FromSeconds(entry.timeSeconds);
+                string buildColor = GetBuildTypeColor(entry.kind);
+
+                table.AddRow(
+                    $"[yellow]{timeSpan:mm\\:ss}[/]",
+                    $"[{buildColor}]{entry.kind}[/]",
+                    EscapeMarkup(entry.name)
+                );
             }
 
             AnsiConsole.Write(table);
