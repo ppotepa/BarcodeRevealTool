@@ -29,7 +29,6 @@ namespace BarcodeRevealTool.Services
             if (File.Exists(CacheLockFile))
             {
                 System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache lock file exists, cache is already initialized");
-                _outputProvider.RenderCacheSyncMessage();
                 BuildOrderReader.InitializeCache();
                 await SyncReplaysFromDiskAsync();
                 return;
