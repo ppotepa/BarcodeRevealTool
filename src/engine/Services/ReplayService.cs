@@ -14,6 +14,8 @@ namespace BarcodeRevealTool.Services
         private readonly IConfiguration _configuration;
         private string CacheLockFile => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.lock");
 
+        public Action? OnCacheOperationComplete { get; set; }
+
         public ReplayService(IOutputProvider outputProvider, IConfiguration configuration)
         {
             _outputProvider = outputProvider;
@@ -112,6 +114,9 @@ namespace BarcodeRevealTool.Services
             // This ensures full cache is only built once on first startup
             File.WriteAllText(CacheLockFile, DateTime.UtcNow.ToString("O"));
             System.Diagnostics.Debug.WriteLine($"[ReplayService] Cache initialization complete, lock file created");
+
+            // Notify that cache operation is complete so UI can refresh
+            OnCacheOperationComplete?.Invoke();
         }
 
         public async Task SyncReplaysFromDiskAsync()
@@ -216,6 +221,9 @@ namespace BarcodeRevealTool.Services
             {
                 _outputProvider.RenderSyncComplete(newReplaysAdded);
             }
+
+            // Notify that cache operation is complete so UI can refresh
+            OnCacheOperationComplete?.Invoke();
         }
 
         /// <summary>

@@ -46,6 +46,13 @@ namespace BarcodeRevealTool.Engine
 
             // Subscribe to game state changes
             _gameStateManager.GameProcessStateChanged += OnGameProcessStateChanged;
+
+            // Subscribe to cache operation completion to refresh display
+            _replayService.OnCacheOperationComplete += () =>
+            {
+                System.Diagnostics.Debug.WriteLine($"[GameEngine] Cache operation complete, refreshing display");
+                DisplayCurrentState();
+            };
         }
 
         // Events for state management

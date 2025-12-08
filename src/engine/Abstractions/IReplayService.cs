@@ -6,6 +6,12 @@ namespace BarcodeRevealTool.Engine.Abstractions
     /// </summary>
     public interface IReplayService
     {
+        /// <summary>
+        /// Callback invoked when cache operations complete (initialization or sync).
+        /// Allows UI to refresh display after cache is ready.
+        /// </summary>
+        Action? OnCacheOperationComplete { get; set; }
+
         Task InitializeCacheAsync();
         Task SyncReplaysFromDiskAsync();
         /// <summary>
