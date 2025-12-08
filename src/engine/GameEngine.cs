@@ -32,6 +32,7 @@ namespace BarcodeRevealTool.Engine
         private readonly IReplayService _replayService;
         private readonly IGameLobbyFactory _gameLobbyFactory;
         private readonly IConfiguration _configuration;
+        private readonly GameStateManager _gameStateManager = new();
 
         public GameEngine(IConfiguration configuration, IServiceProvider services, Sc2PulseClient pulseClient, IOutputProvider outputProvider, IReplayService replayService, IGameLobbyFactory gameLobbyFactory)
         {
@@ -42,6 +43,9 @@ namespace BarcodeRevealTool.Engine
             _outputProvider = outputProvider;
             _replayService = replayService;
             _gameLobbyFactory = gameLobbyFactory;
+
+            // Subscribe to game state changes
+            _gameStateManager.GameProcessStateChanged += OnGameProcessStateChanged;
         }
 
         // Events for state management
@@ -127,8 +131,7 @@ namespace BarcodeRevealTool.Engine
 
             if (CurrentState == ToolState.Awaiting)
             {
-                var sc2IsRunning = IsStarCraft2Running();
-                if (sc2IsRunning)
+                if (_gameStateManager.IsGameRunning)
                 {
                     _outputProvider.RenderWarning("StarCraft II is running but no match detected yet. Waiting for match...");
                 }
@@ -152,15 +155,7 @@ namespace BarcodeRevealTool.Engine
 
         private bool IsStarCraft2Running()
         {
-            try
-            {
-                return System.Diagnostics.Process.GetProcessesByName("SC2").Length > 0 ||
-                       System.Diagnostics.Process.GetProcessesByName("StarCraft II").Length > 0;
-            }
-            catch
-            {
-                return false;
-            }
+            return _gameStateManager.IsStarCraft2Running();
         }
 
         private async Task InitializeCacheAsync()
@@ -196,6 +191,10 @@ namespace BarcodeRevealTool.Engine
                 try
                 {
                     bool lobbyFileExists = File.Exists(LobbyFilePath);
+                    
+                    // Update game process state (fires events if state changed)
+                    _gameStateManager.UpdateGameProcessState(lobbyFileExists);
+                    
                     ToolState newState = lobbyFileExists ? ToolState.InGame : ToolState.Awaiting;
                     System.Diagnostics.Debug.WriteLine($"[GameEngine] State check: {newState}, LobbyFileExists: {lobbyFileExists}");
 
@@ -347,6 +346,27 @@ namespace BarcodeRevealTool.Engine
                 _cachedLobby = null;
             }
         }
+
+        private void OnGameProcessStateChanged(object? sender, GameProcessStateChangedEventArgs e)
+        {
+            System.Diagnostics.Debug.WriteLine($"[GameEngine] Game process state changed: {e.OldState} -> {e.NewState}");
+            
+            if (e.NewState == GameStateManager.GameProcessState.NotRunning)
+            {
+                // Game exited
+                System.Diagnostics.Debug.WriteLine($"[GameEngine] StarCraft II has exited");
+                CurrentState = ToolState.Awaiting;
+                _cachedLobby = null;
+            }
+            else if (e.NewState == GameStateManager.GameProcessState.Running)
+            {
+                // Game started but no match yet
+                System.Diagnostics.Debug.WriteLine($"[GameEngine] StarCraft II is running, waiting for match");
+                CurrentState = ToolState.Awaiting;
+                _cachedLobby = null;
+            }
+            // InMatch state is handled by the main state check logic
+        }
     }
 
     public class ToolStateChangedEventArgs : EventArgs
@@ -372,3 +392,4 @@ namespace BarcodeRevealTool.Engine
         public DateTime Timestamp { get; set; }
     }
 }
+
