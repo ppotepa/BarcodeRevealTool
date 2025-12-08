@@ -185,17 +185,40 @@ namespace BarcodeRevealTool.Replay
         }
 
         /// <summary>
-        /// Extract player ID from player object (format: "1-S2-1-11057632").
-        /// Tries to get from UserId property, falls back to empty string if not available.
+        /// <summary>
+        /// Extract player toon handle from player object.
+        /// Format: "region-S2-realm-id" (e.g., "2-S2-1-11057632")
+        /// This is Blizzard's stable unique identifier for an account, 
+        /// even if the player uses barcodes or changes their display name.
         /// </summary>
         private static string ExtractPlayerId(dynamic player)
         {
             try
             {
-                // Try to access UserId property from s2protocol Player object
-                if (player.UserId != null)
+                // Try to access Toon object from s2protocol Player
+                var toon = GetDynamicProperty(player, "Toon") 
+                        ?? GetDynamicProperty(player, "m_toon");
+                
+                if (toon != null)
                 {
-                    return player.UserId.ToString() ?? string.Empty;
+                    int? region = GetDynamicPropertyAsInt(toon, "Region") 
+                               ?? GetDynamicPropertyAsInt(toon, "m_region");
+                    int? realm = GetDynamicPropertyAsInt(toon, "Realm") 
+                              ?? GetDynamicPropertyAsInt(toon, "m_realm");
+                    long? id = GetDynamicPropertyAsLong(toon, "Id") 
+                            ?? GetDynamicPropertyAsLong(toon, "m_id");
+                    
+                    if (region.HasValue && realm.HasValue && id.HasValue)
+                    {
+                        return $"{region.Value}-S2-{realm.Value}-{id.Value}";
+                    }
+                }
+
+                // Fallback: try UserId directly
+                var userId = GetDynamicProperty(player, "UserId");
+                if (userId != null)
+                {
+                    return userId.ToString() ?? string.Empty;
                 }
             }
             catch
@@ -204,6 +227,63 @@ namespace BarcodeRevealTool.Replay
             }
 
             return string.Empty;
+        }
+
+        /// <summary>
+        /// Safely get a dynamic property from an object using reflection.
+        /// </summary>
+        private static object? GetDynamicProperty(dynamic obj, string propertyName)
+        {
+            try
+            {
+                var type = obj.GetType();
+                var property = type.GetProperty(propertyName);
+                return property?.GetValue(obj);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Safely get a dynamic property and convert to int.
+        /// </summary>
+        private static int? GetDynamicPropertyAsInt(dynamic obj, string propertyName)
+        {
+            try
+            {
+                var value = GetDynamicProperty(obj, propertyName);
+                if (value == null) return null;
+                
+                if (value is int intVal) return intVal;
+                if (int.TryParse(value.ToString(), out int result)) return result;
+            }
+            catch
+            {
+                // Silently fail
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Safely get a dynamic property and convert to long.
+        /// </summary>
+        private static long? GetDynamicPropertyAsLong(dynamic obj, string propertyName)
+        {
+            try
+            {
+                var value = GetDynamicProperty(obj, propertyName);
+                if (value == null) return null;
+                
+                if (value is long longVal) return longVal;
+                if (long.TryParse(value.ToString(), out long result)) return result;
+            }
+            catch
+            {
+                // Silently fail
+            }
+            return null;
         }
 
         private static Queue<BuildOrderEntry> ExtractBuildOrder(Sc2Replay replay)
