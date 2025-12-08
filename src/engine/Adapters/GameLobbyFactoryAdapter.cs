@@ -26,7 +26,13 @@ namespace BarcodeRevealTool.Adapters
 
                 var lobby = _gameLobbyFactory.CreateLobby(lobbyData, appSettings);
                 System.Diagnostics.Debug.WriteLine($"[GameLobbyFactoryAdapter] Lobby created successfully: {lobby}");
-                return lobby as ISoloGameLobby;
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactoryAdapter] Lobby type: {lobby?.GetType().FullName}");
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactoryAdapter] Lobby implements ISoloGameLobby: {lobby is ISoloGameLobby}");
+                
+                var result = lobby as ISoloGameLobby;
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactoryAdapter] Cast result: {result}");
+                
+                return result;
             }
             catch (Exception ex)
             {
