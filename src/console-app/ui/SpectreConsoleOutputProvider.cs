@@ -79,6 +79,9 @@ namespace BarcodeRevealTool.UI.Console
 
         public void RenderLobbyInfo(BarcodeRevealTool.Engine.Abstractions.ISoloGameLobby lobby, object? additionalData, object? lastBuildOrder)
         {
+            System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] RenderLobbyInfo called with lobby={lobby != null}, additionalData={additionalData != null}, lastBuildOrder={lastBuildOrder != null}");
+            System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] Team1={lobby.Team1}, Team2={lobby.Team2}");
+            
             AnsiConsole.Clear();
 
             // Title
