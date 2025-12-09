@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS Replays (
     ReplayFilePath TEXT NOT NULL UNIQUE,
     FileHash TEXT NOT NULL,
     SC2ClientVersion TEXT,
+    Winner TEXT,
     BuildOrderCached INTEGER DEFAULT 0,
     CachedAt TEXT,
     CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -91,20 +92,8 @@ CREATE INDEX IF NOT EXISTS idx_UserAccounts_ToonHandle ON UserAccounts(ToonHandl
 CREATE INDEX IF NOT EXISTS idx_UserAccounts_Region ON UserAccounts(Region);
 CREATE INDEX IF NOT EXISTS idx_UserAccounts_NickName ON UserAccounts(NickName);
 
--- Backwards-compatibility: add NickName column for existing databases created before this field existed.
-ALTER TABLE UserAccounts ADD COLUMN NickName TEXT;
-
--- Backwards-compatibility for Opponents upgrades
-ALTER TABLE Opponents ADD COLUMN DisplayName TEXT;
-ALTER TABLE Opponents ADD COLUMN NickName TEXT DEFAULT '';
-ALTER TABLE Opponents ADD COLUMN NormalizedBattleTag TEXT DEFAULT '';
-UPDATE Opponents SET DisplayName = COALESCE(DisplayName, Name) WHERE DisplayName IS NULL OR DisplayName = '';
-UPDATE Opponents SET NickName = CASE WHEN NickName IS NULL OR NickName = '' THEN DisplayName ELSE NickName END;
-UPDATE Opponents SET BattleTag = REPLACE(IFNULL(BattleTag, ''), '_', '#');
-UPDATE Opponents SET NormalizedBattleTag = CASE
-    WHEN NormalizedBattleTag IS NULL OR NormalizedBattleTag = '' THEN REPLACE(IFNULL(BattleTag, ''), '_', '#')
-    ELSE NormalizedBattleTag
-END;
+-- Note: ALTER TABLE ADD COLUMN statements are handled in code for compatibility with older SQLite versions
+-- Backwards-compatibility migrations are applied programmatically in ReplayDatabase.cs
 
 -- View for easy player vs player lookups
 CREATE VIEW IF NOT EXISTS ReplaysByPlayers AS

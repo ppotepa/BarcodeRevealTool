@@ -197,16 +197,25 @@ namespace BarcodeRevealTool.Engine
                         opponentGames = _replayService.GetGamesByOpponentId(ourCharId, opponentToonHandle, limit: 100);
                         System.Diagnostics.Debug.WriteLine($"[GameEngine] GetGamesByOpponentId returned {opponentGames?.Count ?? 0} games");
 
-                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Querying opponent last build order: opponentToonHandle={opponentToonHandle}");
-                        opponentLastBuild = _replayService.GetOpponentLastBuildOrder(opponentToonHandle, limit: 20);
-                        System.Diagnostics.Debug.WriteLine($"[GameEngine] GetOpponentLastBuildOrder returned {opponentLastBuild?.Count ?? 0} entries");
+                        // Query last build order using opponent name from lobby
+                        string opponentName = opponentPlayer?.NickName ?? string.Empty;
+                        if (!string.IsNullOrEmpty(opponentName))
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[GameEngine] Querying opponent last build order: opponentName={opponentName}");
+                            opponentLastBuild = _replayService.GetOpponentLastBuildOrder(opponentName, limit: 20);
+                            System.Diagnostics.Debug.WriteLine($"[GameEngine] GetOpponentLastBuildOrder returned {opponentLastBuild?.Count ?? 0} entries");
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[GameEngine] Skipping opponent build order query (opponent name not available)");
+                        }
                     }
                     else
                     {
                         System.Diagnostics.Debug.WriteLine($"[GameEngine] Skipping opponent history queries (ourCharId or opponentToonHandle missing). ourCharId={ourCharId}, opponentToonHandle={opponentToonHandle}");
                     }
 
-                    _outputProvider.RenderLobbyInfo(_cachedLobby, _cachedLobby.AdditionalData, _cachedLobby.LastBuildOrderEntry, opponentPlayer, opponentGames, opponentLastBuild);
+                    _outputProvider.RenderLobbyInfo(_cachedLobby, _cachedLobby.AdditionalData, _cachedLobby.LastBuildOrderEntry, opponentPlayer, opponentLastBuild);
 
                     // Log detected queue type if available
                     if (_cachedLobby.DetectedQueue.HasValue)
@@ -214,25 +223,29 @@ namespace BarcodeRevealTool.Engine
                         System.Diagnostics.Debug.WriteLine($"[GameEngine] Displaying detected queue type: {_cachedLobby.DetectedQueue.Value}");
                     }
 
-                    // Get and display opponent match history
-                    var team1 = _cachedLobby.Team1;
-                    var team2 = _cachedLobby.Team2;
-
-                    if (team1?.Players.Count > 0 && team2?.Players.Count > 0)
+                    // Get and display opponent match history using already-identified teams
+                    var usersTeamObj2 = _cachedLobby as GameLobby;
+                    if (usersTeamObj2?.UsersTeam != null)
                     {
-                        var player1Name = team1.Players.First().NickName;
-                        var player2Name = team2.Players.First().NickName;
+                        var yourTeam = usersTeamObj2.UsersTeam.Invoke(_cachedLobby);
+                        var oppTeam = usersTeamObj2.OppositeTeam?.Invoke(_cachedLobby);
 
-                        System.Diagnostics.Debug.WriteLine($"[GameEngine] Querying opponent match history by name: player1={player1Name}, player2={player2Name}, limit=5");
-                        var history = _replayService.GetOpponentMatchHistory(player1Name, player2Name, limit: 5);
-                        if (history.Count > 0)
+                        if (yourTeam?.Players.Count > 0 && oppTeam?.Players.Count > 0)
                         {
-                            System.Diagnostics.Debug.WriteLine($"[GameEngine] GetOpponentMatchHistory returned {history.Count} rows");
-                            _outputProvider.RenderOpponentMatchHistory(history);
-                        }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine("[GameEngine] GetOpponentMatchHistory returned 0 rows");
+                            var yourPlayerTag = yourTeam.Players.First().Tag;
+                            var opponentPlayerTag = oppTeam.Players.First().Tag;
+
+                            System.Diagnostics.Debug.WriteLine($"[GameEngine] Querying opponent match history by tag: you={yourPlayerTag}, opponent={opponentPlayerTag}, limit=5");
+                            var history = _replayService.GetOpponentMatchHistory(yourPlayerTag, opponentPlayerTag, limit: 5);
+                            if (history.Count > 0)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[GameEngine] GetOpponentMatchHistory returned {history.Count} rows");
+                                _outputProvider.RenderOpponentMatchHistory(history);
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine("[GameEngine] GetOpponentMatchHistory returned 0 rows");
+                            }
                         }
                     }
                 }

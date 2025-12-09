@@ -32,8 +32,8 @@ namespace BarcodeRevealTool.Game.Lobbies.Strategies
             var player2 = team2.Players.FirstOrDefault()
                 ?? throw new InvalidOperationException("Team2 contains no players.");
 
-            var player1Tag = NormalizeTag(player1.NickName ?? player1.Tag ?? string.Empty);
-            var player2Tag = NormalizeTag(player2.NickName ?? player2.Tag ?? string.Empty);
+            var player1Tag = NormalizeTag(player1.Tag ?? player1.NickName ?? string.Empty);
+            var player2Tag = NormalizeTag(player2.Tag ?? player2.NickName ?? string.Empty);
 
             if (string.Equals(player1Tag, _normalizedBattleTag, StringComparison.OrdinalIgnoreCase))
             {

@@ -19,9 +19,8 @@ namespace BarcodeRevealTool.Engine.Abstractions
         void RenderWarning(string message);
         void RenderError(string message);
         void RenderLobbyInfo(ISoloGameLobby lobby, object? additionalData, object? lastBuildOrder, Player? opponentPlayer = null,
-            List<(string yourName, string opponentName, string yourRace, string opponentRace, DateTime gameDate, string map)>? opponentGames = null,
             List<(double timeSeconds, string kind, string name)>? opponentLastBuild = null);
-        void RenderOpponentMatchHistory(List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName)> history);
+        void RenderOpponentMatchHistory(List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName, string? winner, string replayFilePath)> history);
 
         /// <summary>
         /// Handle periodic state updates (fired every 1500ms).

@@ -607,50 +607,35 @@ namespace BarcodeRevealTool.Services
             }
         }
 
-        public List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName)>
+        public List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName, string? winner, string replayFilePath)>
             GetOpponentMatchHistory(string yourPlayerName, string opponentName, int limit = 10)
         {
             try
             {
                 var database = new ReplayDatabase();
-                
+
                 // Validate and normalize player names against known user accounts
                 var validatedYourName = database.ValidateAndNormalizePlayerName(yourPlayerName);
                 var validatedOpponentName = database.ValidateAndNormalizePlayerName(opponentName);
-                
+
                 System.Diagnostics.Debug.WriteLine($"[ReplayService] GetOpponentMatchHistory: original names: you='{yourPlayerName}', opponent='{opponentName}' -> validated: you='{validatedYourName}', opponent='{validatedOpponentName}'");
-                
+
                 return database.GetOpponentMatchHistory(validatedYourName, validatedOpponentName, limit);
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[ReplayService] Error getting opponent match history: {ex}");
-                return new List<(string, DateTime, string, string, string, string)>();
-            }
-        }
-
-        public List<(string yourName, string opponentName, string yourRace, string opponentRace, DateTime gameDate, string map)>
-            GetGamesByOpponentId(string yourPlayerId, string opponentPlayerId, int limit = 100)
-        {
-            try
-            {
-                var database = new ReplayDatabase();
-                return database.GetGamesByOpponentId(yourPlayerId, opponentPlayerId, limit);
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ReplayService] Error getting games by opponent ID: {ex}");
-                return new List<(string, string, string, string, DateTime, string)>();
+                return new List<(string, DateTime, string, string, string, string, string?, string)>();
             }
         }
 
         public List<(double timeSeconds, string kind, string name)>?
-            GetOpponentLastBuildOrder(string opponentPlayerId, int limit = 20)
+            GetOpponentLastBuildOrder(string opponentName, int limit = 20)
         {
             try
             {
                 var database = new ReplayDatabase();
-                return database.GetOpponentLastBuildOrder(opponentPlayerId, limit);
+                return database.GetOpponentLastBuildOrder(opponentName, limit);
             }
             catch (Exception ex)
             {
@@ -723,6 +708,21 @@ namespace BarcodeRevealTool.Services
             return string.IsNullOrWhiteSpace(value)
                 ? string.Empty
                 : value.Replace('_', '#').Trim().ToLowerInvariant();
+        }
+
+        public List<(string yourName, string opponentName, string yourRace, string opponentRace, DateTime gameDate, string map)>
+            GetGamesByOpponentId(string yourPlayerId, string opponentPlayerId, int limit = 100)
+        {
+            try
+            {
+                var database = new ReplayDatabase();
+                return database.GetGamesByOpponentId(yourPlayerId, opponentPlayerId, limit);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayService] Error getting games by opponent ID: {ex}");
+                return new List<(string, string, string, string, DateTime, string)>();
+            }
         }
     }
 }

@@ -613,12 +613,30 @@ namespace BarcodeRevealTool.Replay
             DateTime gameDate = new FileInfo(replayFilePath).LastWriteTime;
             string sc2Version = replay.Metadata?.GameVersion?.ToString() ?? "Unknown";
 
+            // Extract winner from player results
+            string? winner = null;
+            if (replay.Details?.Players != null && replay.Details.Players.Count > 0)
+            {
+                // Find the player with the best result (usually 1 = won, 2 = lost)
+                var playersByResult = replay.Details.Players
+                    .OrderBy(p => p.Result)
+                    .ToList();
+
+                if (playersByResult.Count > 0)
+                {
+                    var winner_player = playersByResult.First();
+                    winner = NormalizePlayerHandle(winner_player.Name) ?? "Unknown";
+                    System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] ReadReplay: Winner identified as {winner} (result={winner_player.Result})");
+                }
+            }
+
             var replayMetadata = new ReplayMetadata
             {
                 FilePath = replayFilePath,
                 Map = mapName,
                 GameDate = gameDate,
                 SC2ClientVersion = sc2Version,
+                Winner = winner,
                 Players = replay.Details?.Players?.Select(p => new PlayerInfo
                 {
                     Name = NormalizePlayerHandle(p.Name),
@@ -686,7 +704,8 @@ namespace BarcodeRevealTool.Replay
                         replayFilePath,
                         metadata.SC2ClientVersion,
                         player1.PlayerId,
-                        player2.PlayerId
+                        player2.PlayerId,
+                        metadata.Winner
                     );
 
                     if (replayId > 0)
@@ -702,6 +721,103 @@ namespace BarcodeRevealTool.Replay
             {
                 System.Diagnostics.Debug.WriteLine($"[BuildOrderReader] StoreReplayInDatabaseAsync: Error - {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Extract the winner from a replay file by reading it with s2protocol.
+        /// Returns the winner's normalized name, or null if unable to determine.
+        /// </summary>
+        public static string? ExtractWinnerFromReplayFile(string replayFilePath)
+        {
+            try
+            {
+                if (!File.Exists(replayFilePath))
+                {
+                    System.Diagnostics.Debug.WriteLine($"[BuildOrderReader.ExtractWinnerFromReplayFile] File not found: {replayFilePath}");
+                    return null;
+                }
+
+                var decoder = new ReplayDecoder();
+                var opts = new ReplayDecoderOptions
+                {
+                    Details = true,
+                    Metadata = false,
+                    TrackerEvents = false,
+                    GameEvents = false,
+                    MessageEvents = false,
+                    AttributeEvents = false
+                };
+
+                var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var replay = decoder.DecodeAsync(replayFilePath, opts, cts.Token).GetAwaiter().GetResult();
+
+                if (replay?.Details == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[BuildOrderReader.ExtractWinnerFromReplayFile] Details missing from replay: {replayFilePath}");
+                    return null;
+                }
+
+                // Get players from details
+                var playersEnum = GetProperty<System.Collections.IEnumerable>(replay.Details, "Players")
+                                ?? GetProperty<System.Collections.IEnumerable>(replay.Details, "PlayerList");
+
+                if (playersEnum == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[BuildOrderReader.ExtractWinnerFromReplayFile] No players found in Details");
+                    return null;
+                }
+
+                var players = new List<(string name, int? result)>();
+                foreach (var p in playersEnum)
+                {
+                    string name = GetProperty<string>(p, "Name")
+                                ?? GetProperty<string>(p, "PlayerName")
+                                ?? "<??>";
+
+                    int? resultValue = GetProperty<int?>(p, "Result")
+                                    ?? GetProperty<int?>(p, "m_result");
+
+                    // Result: 1 = Victory, 2 = Defeat (typically)
+                    players.Add((name, resultValue));
+                }
+
+                // Find winner (player with lowest result value, typically 1 for victory)
+                if (players.Any())
+                {
+                    var winner = players.OrderBy(p => p.result ?? int.MaxValue).First();
+                    var winnerName = NormalizePlayerHandle(winner.name);
+                    System.Diagnostics.Debug.WriteLine($"[BuildOrderReader.ExtractWinnerFromReplayFile] Winner extracted: {winnerName} (result={winner.result})");
+                    return winnerName;
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[BuildOrderReader.ExtractWinnerFromReplayFile] Error decoding replay: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Get a property from an object using reflection, supporting multiple property name patterns.
+        /// </summary>
+        private static T? GetProperty<T>(object obj, string propertyName)
+        {
+            if (obj == null)
+                return default;
+
+            var type = obj.GetType();
+            var property = type.GetProperty(propertyName,
+                System.Reflection.BindingFlags.IgnoreCase | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+            if (property != null)
+            {
+                var value = property.GetValue(obj);
+                return (T?)Convert.ChangeType(value, typeof(T));
+            }
+
+            return default;
         }
     }
 }

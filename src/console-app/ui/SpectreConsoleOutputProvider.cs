@@ -84,7 +84,6 @@ namespace BarcodeRevealTool.UI.Console
         }
 
         public void RenderLobbyInfo(ISoloGameLobby lobby, object? additionalData, object? lastBuildOrder, Player? opponentPlayer = null,
-            List<(string yourName, string opponentName, string yourRace, string opponentRace, DateTime gameDate, string map)>? opponentGames = null,
             List<(double timeSeconds, string kind, string name)>? opponentLastBuild = null)
         {
             System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] RenderLobbyInfo called with lobby={lobby != null}, additionalData={additionalData != null}, lastBuildOrder={lastBuildOrder != null}, opponentPlayer={opponentPlayer != null}");
@@ -106,10 +105,6 @@ namespace BarcodeRevealTool.UI.Console
             RenderOpponentStats(additionalData as LadderDistinctCharacter, opponentPlayer);
             AnsiConsole.WriteLine();
 
-            // Opponent games vs you
-            RenderOpponentGamesStats(opponentGames);
-            AnsiConsole.WriteLine();
-
             // Opponent's last build order
             RenderOpponentLastBuildOrder(opponentLastBuild);
             AnsiConsole.WriteLine();
@@ -129,7 +124,9 @@ namespace BarcodeRevealTool.UI.Console
             AnsiConsole.MarkupLine($"[bold yellow]{teamName}[/]");
             foreach (var player in team.Players)
             {
-                AnsiConsole.MarkupLine($"  [cyan]→[/] {EscapeMarkup(player.NickName)} {EscapeMarkup(player.Tag)}");
+                string displayName = string.IsNullOrEmpty(player.NickName) ? player.Tag : player.NickName;
+                string battleTag = player.Tag;
+                AnsiConsole.MarkupLine($"  [cyan]→[/] {EscapeMarkup(displayName)} [grey]({EscapeMarkup(battleTag)})[/]");
             }
         }
 
@@ -370,7 +367,7 @@ namespace BarcodeRevealTool.UI.Console
             };
         }
 
-        public void RenderOpponentMatchHistory(List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName)> history)
+        public void RenderOpponentMatchHistory(List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName, string? winner, string replayFilePath)> history)
         {
             if (history == null || history.Count == 0)
             {
@@ -386,18 +383,45 @@ namespace BarcodeRevealTool.UI.Console
             table.AddColumn("[cyan]Map[/]");
             table.AddColumn("[cyan]Your Race[/]");
             table.AddColumn("[cyan]Opponent Race[/]");
+            table.AddColumn("[cyan]Result[/]");
             table.AddColumn("[cyan]Replay File[/]");
 
-            foreach (var (opponentName, gameDate, map, yourRace, opponentRace, replayFileName) in history)
+            foreach (var (opponentName, gameDate, map, yourRace, opponentRace, replayFileName, winner, replayFilePath) in history)
             {
                 var daysAgo = (int)(DateTime.Now - gameDate).TotalDays;
                 var daysAgoStr = daysAgo == 0 ? "Today" : daysAgo == 1 ? "Yesterday" : $"{daysAgo}d ago";
+
+                // Determine if this was a win or loss based on winner
+                string resultDisplay = "?";
+                string? resolvedWinner = winner;
+
+                // If winner not in DB, try to extract from replay file
+                if (string.IsNullOrEmpty(resolvedWinner) && !string.IsNullOrEmpty(replayFilePath))
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] Winner null for replay {replayFileName}, attempting to extract from file: {replayFilePath}");
+                    resolvedWinner = BarcodeRevealTool.Replay.BuildOrderReader.ExtractWinnerFromReplayFile(replayFilePath);
+                }
+
+                if (!string.IsNullOrEmpty(resolvedWinner))
+                {
+                    // If winner == opponentName, we lost. If winner != opponentName, we won.
+                    bool isLoss = resolvedWinner.Equals(opponentName, StringComparison.OrdinalIgnoreCase) ||
+                                  resolvedWinner.Contains(opponentName, StringComparison.OrdinalIgnoreCase);
+                    resultDisplay = isLoss ? "[red]LOSS[/]" : "[green]WIN[/]";
+                    System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] Match: opponent={opponentName}, winner={resolvedWinner}, result={resultDisplay}");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SpectreConsoleOutputProvider] Match: opponent={opponentName}, winner=NULL/EMPTY (could not extract)");
+                    resultDisplay = "[yellow]?[/]";
+                }
 
                 table.AddRow(
                     $"[yellow]{daysAgoStr}[/]",
                     EscapeMarkup(map),
                     $"[green]{EscapeMarkup(yourRace)}[/]",
                     $"[magenta]{EscapeMarkup(opponentRace)}[/]",
+                    resultDisplay,
                     $"[cyan]{EscapeMarkup(Path.GetFileNameWithoutExtension(replayFileName))}[/]"
                 );
             }

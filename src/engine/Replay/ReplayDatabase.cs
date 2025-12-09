@@ -49,6 +49,57 @@ namespace BarcodeRevealTool.Replay
             return connection;
         }
 
+        private void LogQuery(SqlKata.Query query, string operation = "SELECT")
+        {
+            try
+            {
+                var compiler = new SqliteCompiler();
+                var compiled = compiler.Compile(query);
+
+                // Build full SQL with actual parameter values
+                string fullSql = compiled.Sql;
+                for (int i = 0; i < compiled.Bindings.Count; i++)
+                {
+                    var binding = compiled.Bindings[i];
+                    string paramValue;
+
+                    if (binding == null)
+                    {
+                        paramValue = "NULL";
+                    }
+                    else if (binding is string)
+                    {
+                        paramValue = $"'{binding}'";
+                    }
+                    else if (binding is bool)
+                    {
+                        paramValue = ((bool)binding) ? "1" : "0";
+                    }
+                    else if (binding is DateTime dt)
+                    {
+                        paramValue = $"'{dt:O}'";
+                    }
+                    else
+                    {
+                        paramValue = binding.ToString() ?? "NULL";
+                    }
+
+                    fullSql = fullSql.Replace($"@p{i}", paramValue);
+                }
+
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.Query] {operation}: {fullSql}");
+            }
+            catch
+            {
+                // If logging fails, don't break the query execution
+            }
+        }
+
+        private void LogRawSql(string sql)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.SQL] {sql}");
+        }
+
         private QueryFactory CreateQueryFactory()
         {
             var connection = CreateConnection();
@@ -91,11 +142,113 @@ namespace BarcodeRevealTool.Replay
                     System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Schema statement failed (ignored): {ex.Message}. Statement start: {stmt.Substring(0, Math.Min(200, stmt.Length))}");
                 }
             }
+
+            // Apply backwards-compatibility migrations
+            ApplySchemaMigrations(queryFactory);
+        }
+
+        private void ApplySchemaMigrations(QueryFactory queryFactory)
+        {
+            try
+            {
+                // Migration 1: Add NickName column to UserAccounts if it doesn't exist
+                try
+                {
+                    queryFactory.Statement("ALTER TABLE UserAccounts ADD COLUMN NickName TEXT;");
+                    System.Diagnostics.Debug.WriteLine("[ReplayDatabase] Applied migration: Added NickName to UserAccounts");
+                }
+                catch
+                {
+                    // Column likely already exists
+                }
+
+                // Migration 2: Add DisplayName column to Opponents if it doesn't exist
+                try
+                {
+                    queryFactory.Statement("ALTER TABLE Opponents ADD COLUMN DisplayName TEXT;");
+                    System.Diagnostics.Debug.WriteLine("[ReplayDatabase] Applied migration: Added DisplayName to Opponents");
+                }
+                catch
+                {
+                    // Column likely already exists
+                }
+
+                // Migration 3: Add NickName column to Opponents if it doesn't exist
+                try
+                {
+                    queryFactory.Statement("ALTER TABLE Opponents ADD COLUMN NickName TEXT DEFAULT '';");
+                    System.Diagnostics.Debug.WriteLine("[ReplayDatabase] Applied migration: Added NickName to Opponents");
+                }
+                catch
+                {
+                    // Column likely already exists
+                }
+
+                // Migration 4: Add NormalizedBattleTag column to Opponents if it doesn't exist
+                try
+                {
+                    queryFactory.Statement("ALTER TABLE Opponents ADD COLUMN NormalizedBattleTag TEXT DEFAULT '';");
+                    System.Diagnostics.Debug.WriteLine("[ReplayDatabase] Applied migration: Added NormalizedBattleTag to Opponents");
+                }
+                catch
+                {
+                    // Column likely already exists
+                }
+
+                // Update DisplayName for Opponents
+                try
+                {
+                    queryFactory.Statement("UPDATE Opponents SET DisplayName = COALESCE(DisplayName, Name) WHERE DisplayName IS NULL OR DisplayName = '';");
+                }
+                catch
+                {
+                    // Table might be empty or column updates failed
+                }
+
+                // Update NickName based on DisplayName
+                try
+                {
+                    queryFactory.Statement("UPDATE Opponents SET NickName = CASE WHEN NickName IS NULL OR NickName = '' THEN DisplayName ELSE NickName END;");
+                }
+                catch
+                {
+                    // Table might be empty
+                }
+
+                // Normalize BattleTag (replace _ with #)
+                try
+                {
+                    queryFactory.Statement("UPDATE Opponents SET BattleTag = REPLACE(IFNULL(BattleTag, ''), '_', '#');");
+                }
+                catch
+                {
+                    // Update might fail if column doesn't exist or table is empty
+                }
+
+                // Update NormalizedBattleTag
+                try
+                {
+                    queryFactory.Statement(@"UPDATE Opponents SET NormalizedBattleTag = CASE
+                        WHEN NormalizedBattleTag IS NULL OR NormalizedBattleTag = '' THEN REPLACE(IFNULL(BattleTag, ''), '_', '#')
+                        ELSE NormalizedBattleTag
+                    END;");
+                }
+                catch
+                {
+                    // Update might fail if column doesn't exist or table is empty
+                }
+
+                System.Diagnostics.Debug.WriteLine("[ReplayDatabase] Schema migrations completed");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase] Error applying migrations: {ex.Message}");
+            }
         }
         /// Add or update a replay record in the database (INSERT ONLY - never deletes).
         /// </summary>
         public long AddOrUpdateReplay(string player1, string player2, string map, string race1, string race2,
-            DateTime gameDate, string replayFilePath, string? sc2ClientVersion = null, string? player1Id = null, string? player2Id = null)
+            DateTime gameDate, string replayFilePath, string? sc2ClientVersion = null, string? player1Id = null, string? player2Id = null, string? winner = null)
         {
             try
             {
@@ -120,7 +273,7 @@ namespace BarcodeRevealTool.Replay
                 var fileHash = ComputeFileHash(replayFilePath);
                 var now = DateTime.UtcNow.ToString("O");
 
-                return queryFactory.Query("Replays").InsertGetId<long>(new
+                var insertData = new
                 {
                     ReplayGuid = replayGuid.ToString(),
                     You = player1,
@@ -134,9 +287,14 @@ namespace BarcodeRevealTool.Replay
                     ReplayFilePath = replayFilePath,
                     FileHash = fileHash,
                     SC2ClientVersion = sc2ClientVersion,
+                    Winner = winner,
                     CreatedAt = now,
                     UpdatedAt = now
-                });
+                };
+
+                LogRawSql($"INSERT INTO Replays (ReplayGuid, You, Opponent, YouId, OpponentId, Map, YourRace, OpponentRace, GameDate, ReplayFilePath, FileHash, SC2ClientVersion, Winner, CreatedAt, UpdatedAt) VALUES ('{replayGuid}', '{player1}', '{player2}', '{player1Id}', '{player2Id}', '{map}', '{race1}', '{race2}', '{gameDate:O}', '{replayFilePath}', '{fileHash}', '{sc2ClientVersion}', '{winner}', '{now}', '{now}')");
+
+                return queryFactory.Query("Replays").InsertGetId<long>(insertData);
             }
             catch (Exception ex)
             {
@@ -196,9 +354,12 @@ namespace BarcodeRevealTool.Replay
             {
                 using var queryFactory = CreateQueryFactory();
 
-                var replay = queryFactory.Query("Replays")
-                    .Where("ReplayFilePath", filePath)
-                    .FirstOrDefault<dynamic>();
+                var query = queryFactory.Query("Replays")
+                    .Where("ReplayFilePath", filePath);
+
+                LogQuery(query, "SELECT (GetReplayByFilePath)");
+
+                var replay = query.FirstOrDefault<dynamic>();
 
                 return MapToReplayRecord(replay);
             }
@@ -220,10 +381,13 @@ namespace BarcodeRevealTool.Replay
             {
                 using var queryFactory = CreateQueryFactory();
 
-                var dbEntries = queryFactory.Query("BuildOrderEntries")
+                var query = queryFactory.Query("BuildOrderEntries")
                     .Where("ReplayId", replayId)
-                    .OrderBy("TimeSeconds")
-                    .Get<dynamic>();
+                    .OrderBy("TimeSeconds");
+
+                LogQuery(query, "SELECT (GetBuildOrderEntries)");
+
+                var dbEntries = query.Get<dynamic>();
 
                 foreach (var entry in dbEntries)
                 {
@@ -255,11 +419,14 @@ namespace BarcodeRevealTool.Replay
                 using var queryFactory = CreateQueryFactory();
 
                 var likePattern = $"%{playerName}%";
-                var dbReplays = queryFactory.Query("Replays")
+                var query = queryFactory.Query("Replays")
                     .Where(q => q.Where("You", "like", likePattern)
                                  .OrWhere("Opponent", "like", likePattern))
-                    .OrderByDesc("GameDate")
-                    .Get<dynamic>();
+                    .OrderByDesc("GameDate");
+
+                LogQuery(query, "SELECT (GetReplaysWithPlayer)");
+
+                var dbReplays = query.Get<dynamic>();
 
                 foreach (var replay in dbReplays)
                 {
@@ -277,10 +444,10 @@ namespace BarcodeRevealTool.Replay
         /// <summary>
         /// Get match history against a specific opponent (in reverse chronological order).
         /// </summary>
-        public List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName)>
+        public List<(string opponentName, DateTime gameDate, string map, string yourRace, string opponentRace, string replayFileName, string? winner, string replayFilePath)>
             GetOpponentMatchHistory(string yourPlayerName, string opponentName, int limit = 10)
         {
-            var history = new List<(string, DateTime, string, string, string, string)>();
+            var history = new List<(string, DateTime, string, string, string, string, string?, string)>();
 
             try
             {
@@ -296,12 +463,15 @@ namespace BarcodeRevealTool.Replay
                     $"[ReplayDatabase.GetOpponentMatchHistory] yourPlayerName={yourPlayerName}, opponentName={opponentName}, " +
                     $"limit={limit}, normalizedUser={normalizedUserTag}, normalizedOpp={normalizedOppTag}");
 
-                var dbReplays = queryFactory.Query("Replays")
+                var query = queryFactory.Query("Replays")
                     .Where(q => q
                         .Where("You", "like", oppLike)
                         .OrWhere("Opponent", "like", oppLike))
-                    .OrderByDesc("GameDate")
-                    .Get<dynamic>();
+                    .OrderByDesc("GameDate");
+
+                LogQuery(query, "SELECT (GetOpponentMatchHistory)");
+
+                var dbReplays = query.Get<dynamic>();
 
                 foreach (var replay in dbReplays)
                 {
@@ -346,8 +516,12 @@ namespace BarcodeRevealTool.Replay
                     }
 
                     var replayFileName = Path.GetFileName(replayPath);
+                    var winner = replay.Winner?.ToString();
 
-                    history.Add((opponentInMatch, gameDate, map, yourRace, opponentRaceInMatch, replayFileName));
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[ReplayDatabase.GetOpponentMatchHistory] Match: you={yourRace} vs opponent={opponentRaceInMatch}, date={gameDate:yyyy-MM-dd}, map={map}, winner='{winner}'");
+
+                    history.Add((opponentInMatch, gameDate, map, yourRace, opponentRaceInMatch, replayFileName, winner, replayPath));
 
                     if (history.Count >= limit)
                     {
@@ -404,25 +578,23 @@ namespace BarcodeRevealTool.Replay
             string normalizedYourId = BuildOrderReader.NormalizeToonHandle(yourPlayerId);
             string normalizedOpponentId = BuildOrderReader.NormalizeToonHandle(opponentPlayerId);
 
-            // Extract the battle.net ID (last part) for LIKE queries
-            // E.g., "S2-2-1369255" → last part is "1369255"
-            string? opponentIdLastBit = normalizedOpponentId.Split('-').LastOrDefault();
-            string? yourIdLastBit = normalizedYourId.Split('-').LastOrDefault();
-
             System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetGamesByOpponentId] yourPlayerId={yourPlayerId}, normalized={normalizedYourId}");
-            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetGamesByOpponentId] opponentPlayerId={opponentPlayerId}, normalized={normalizedOpponentId}, idBit={opponentIdLastBit}");
+            System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetGamesByOpponentId] opponentPlayerId={opponentPlayerId}, normalized={normalizedOpponentId}");
 
             try
             {
                 using var queryFactory = CreateQueryFactory();
 
-                var dbReplays = queryFactory.Query("Replays")
+                var query = queryFactory.Query("Replays")
                     .Where(q => q
-                        .Where("YouId", "like", $"%{opponentIdLastBit}%")
-                        .OrWhere("OpponentId", "like", $"%{opponentIdLastBit}%"))
+                        .Where("YouId", "like", $"%{normalizedOpponentId}%")
+                        .OrWhere("OpponentId", "like", $"%{normalizedOpponentId}%"))
                     .OrderByDesc("GameDate")
-                    .Limit(limit)
-                    .Get<dynamic>();
+                    .Limit(limit);
+
+                LogQuery(query, "SELECT (GetGamesByOpponentId)");
+
+                var dbReplays = query.Get<dynamic>();
 
                 foreach (var replay in dbReplays)
                 {
@@ -442,14 +614,14 @@ namespace BarcodeRevealTool.Replay
                     // Determine which player is the opponent (matching normalized ID)
                     string yourName, opponentName, yourRace, opponentRaceInMatch;
 
-                    if (normalizedPlayer1Id.EndsWith(opponentIdLastBit ?? "", StringComparison.OrdinalIgnoreCase))
+                    if (normalizedPlayer1Id.Equals(normalizedOpponentId, StringComparison.OrdinalIgnoreCase))
                     {
                         yourName = player2;
                         opponentName = player1;
                         yourRace = race2;
                         opponentRaceInMatch = race1;
                     }
-                    else if (normalizedPlayer2Id.EndsWith(opponentIdLastBit ?? "", StringComparison.OrdinalIgnoreCase))
+                    else if (normalizedPlayer2Id.Equals(normalizedOpponentId, StringComparison.OrdinalIgnoreCase))
                     {
                         yourName = player1;
                         opponentName = player2;
@@ -479,26 +651,19 @@ namespace BarcodeRevealTool.Replay
         /// Get the most recent cached build order for a specific opponent.
         /// Normalizes the toon handle by removing region prefix and searches using LIKE pattern.
         /// </summary>
-        public List<(double timeSeconds, string kind, string name)>? GetOpponentLastBuildOrder(string opponentPlayerId, int limit = 20)
+        public List<(double timeSeconds, string kind, string name)>? GetOpponentLastBuildOrder(string opponentName, int limit = 20)
         {
             try
             {
-                // Normalize player ID to handle both formats (with and without region prefix)
-                // E.g., "1-S2-2-1369255" becomes "S2-2-1369255"
-                string normalizedOpponentId = BuildOrderReader.NormalizeToonHandle(opponentPlayerId);
-
-                // Extract just the battle.net ID (last part) for LIKE queries
-                // E.g., "S2-2-1369255" → last part is "1369255"
-                string? opponentIdLastBit = normalizedOpponentId.Split('-').LastOrDefault();
-
-                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetOpponentLastBuildOrder] opponentPlayerId={opponentPlayerId}, normalized={normalizedOpponentId}, idBit={opponentIdLastBit}");
+                // Search for build orders from replays where the opponent matches the given name
+                // We search by opponent name/nickname from the lobby
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetOpponentLastBuildOrder] Searching for opponent: {opponentName}");
 
                 using var queryFactory = CreateQueryFactory();
 
                 var dbEntries = queryFactory.Query("BuildOrderEntries as boe")
                     .Join("Replays as r", "boe.ReplayId", "r.Id")
-                    .Where(q => q.Where("r.Player1Id", "like", $"%{opponentIdLastBit}%")
-                                 .OrWhere("r.Player2Id", "like", $"%{opponentIdLastBit}%"))
+                    .Where("r.Opponent", "=", opponentName)
                     .Where("r.BuildOrderCached", 1)
                     .OrderByDesc("r.GameDate")
                     .Limit(limit)
@@ -515,7 +680,7 @@ namespace BarcodeRevealTool.Replay
                     ));
                 }
 
-                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetOpponentLastBuildOrder] Found {buildOrders.Count} build order entries");
+                System.Diagnostics.Debug.WriteLine($"[ReplayDatabase.GetOpponentLastBuildOrder] Found {buildOrders.Count} build order entries for opponent {opponentName}");
 
                 return buildOrders.Count > 0 ? buildOrders : null;
             }

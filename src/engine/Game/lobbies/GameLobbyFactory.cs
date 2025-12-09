@@ -10,6 +10,17 @@ using RegexMatch = System.Text.RegularExpressions.Match;
 namespace BarcodeRevealTool.Game
 {
     /// <summary>
+    /// Represents extracted player information from lobby.
+    /// </summary>
+    public record LobbyPlayerInfo(
+        string Player1Nickname,
+        string Player1Tag,
+        string Player2Nickname,
+        string Player2Tag,
+        Queue? CreationStrategy = null
+    );
+
+    /// <summary>
     /// Factory responsible for parsing raw lobby bytes into strongly typed teams.
     /// Uses queue type detection to extract players based on lobby structure pattern.
     /// </summary>
@@ -28,21 +39,17 @@ namespace BarcodeRevealTool.Game
             System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] CreateLobby called with {bytes.Length} bytes");
             try
             {
-                // Detect queue type from SC2 API
-                var detectedQueueType = QueueDetectionService.DetectQueueTypeAsync().Result;
-                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Detected queue type: {detectedQueueType}");
+                var playerInfo = ExtractPlayerInfo(bytes);
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Extracted players: Player1={playerInfo.Player1Nickname}({playerInfo.Player1Tag}), Player2={playerInfo.Player2Nickname}({playerInfo.Player2Tag}), CreationStrategy={playerInfo.CreationStrategy}");
 
-                var playerMatches = ExtractPlayerMatches(bytes);
-                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Extracted {playerMatches.Count} player matches: {string.Join(", ", playerMatches.Cast<RegexMatch>().Select(m => m.Value))}");
+                // For now, only support 1v1. Other queue types will be handled when lobby creation is extended.
+                if (playerInfo.CreationStrategy != Queue.LOTV_1V1)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Warning: Detected queue type {playerInfo.CreationStrategy} is not yet fully supported. Currently only LOTV_1V1 is implemented. Proceeding with extracted players as a 1v1.");
+                }
 
-                var selectedPlayers = SelectPlayersByQueueType(playerMatches, detectedQueueType);
-                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] After queue-based selection: {selectedPlayers.Count} players: {string.Join(", ", selectedPlayers.Select(m => m.Value))}");
-
-                ValidateLobbyFormat(selectedPlayers);
-                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Lobby format validation passed");
-
-                var team1 = CreateTeam("Team 1", selectedPlayers, team1Index: true);
-                var team2 = CreateTeam("Team 2", selectedPlayers, team1Index: false);
+                var team1 = CreateTeam("Team 1", playerInfo.Player1Nickname, playerInfo.Player1Tag);
+                var team2 = CreateTeam("Team 2", playerInfo.Player2Nickname, playerInfo.Player2Tag);
 
                 var (usersTeam, oppositeTeam) = _userIdentificationStrategy.DetermineTeams(team1, team2, bytes);
 
@@ -116,108 +123,75 @@ namespace BarcodeRevealTool.Game
             }
         }
 
-        private MatchCollection ExtractPlayerMatches(byte[] bytes)
+        private LobbyPlayerInfo ExtractPlayerInfo(byte[] bytes)
         {
             var byteString = new string([.. bytes.Select(@byte => (char)@byte)]);
-            return PlayerNamePattern.Matches(byteString);
-        }
+            var matches = PlayerNamePattern.Matches(byteString);
+            var matchList = matches.Cast<RegexMatch>().ToList();
 
-        private List<RegexMatch> SelectPlayersByQueueType(MatchCollection playerMatches, Queue? detectedQueueType)
-        {
-            var matchList = playerMatches.Cast<RegexMatch>().ToList();
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory.ExtractPlayerInfo] Found {matchList.Count} total matches: {string.Join(", ", matchList.Select(m => m.Value))}");
 
-            // Extract players based on detected queue type and known binary pattern:
-            // For 1v1 (LOTV_1V1):
-            //   [0]: Player1 NickName (duplicate)
-            //   [1]: Player1 NickName (duplicate)
+            // Detect queue type and extract player info based on number of matches:
+            // 1v1: 6 matches with pattern:
+            //   [0]: Player1 Nickname
+            //   [1]: Player1 Nickname (duplicate)
             //   [2]: Player1 BattleTag ← SELECT
-            //   [3]: Player2 NickName (duplicate)
-            //   [4]: Player2 NickName (duplicate)
+            //   [3]: Player2 Nickname
+            //   [4]: Player2 Nickname (duplicate)
             //   [5]: Player2 BattleTag ← SELECT
 
-            // For other queue types: fall back to deduplication
-
-            if (detectedQueueType == Queue.LOTV_1V1 && matchList.Count >= 6)
+            Queue? creationStrategy = null;
+            if (matchList.Count < 6)
             {
-                // Use indices [2] and [5] for 1v1 (the actual BattleTags)
-                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory.SelectPlayersByQueueType] 1v1 detected, extracting from indices [2] and [5]");
-                var selected = new List<RegexMatch>
-                {
-                    matchList[2],  // Player 1 BattleTag
-                    matchList[5]   // Player 2 BattleTag
-                };
-                return selected;
+                throw new InvalidOperationException($"Expected at least 6 player name matches for lobby (nicknames + tags), but found {matchList.Count}");
             }
 
-            // Fallback: Deduplicate by full tag for unknown queue types
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory.SelectPlayersByQueueType] Queue type {detectedQueueType} not specifically handled, using fallback deduplication");
-            return DeduplicatePlayers(matchList);
-        }
-        private List<RegexMatch> DeduplicatePlayers(List<RegexMatch> playerMatches)
-        {
-            // Simple deduplication: keep first occurrence of each unique tag
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var deduped = new List<RegexMatch>();
-
-            foreach (var match in playerMatches)
+            // Determine queue type based on match count
+            int playerCount = matchList.Count / 3;
+            if (playerCount == 2 && matchList.Count == 6)
             {
-                var tag = match.Groups["name"].Value;
-                if (string.IsNullOrEmpty(tag))
-                    continue;
-
-                if (!seen.Contains(tag))
-                {
-                    seen.Add(tag);
-                    deduped.Add(match);
-                    System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory.DeduplicatePlayers] Added unique player: {tag}");
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory.DeduplicatePlayers] Skipped duplicate: {tag}");
-                }
+                creationStrategy = Queue.LOTV_1V1;
+            }
+            else if (playerCount == 4 && matchList.Count == 12)
+            {
+                creationStrategy = Queue.LOTV_2V2;
+            }
+            else if (playerCount == 6 && matchList.Count == 18)
+            {
+                creationStrategy = Queue.LOTV_3V3;
+            }
+            else if (playerCount == 8 && matchList.Count == 24)
+            {
+                creationStrategy = Queue.LOTV_4V4;
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory.ExtractPlayerInfo] Warning: Could not determine queue type from {matchList.Count} matches ({playerCount} players)");
             }
 
-            // For 1v1 lobbies, take only first 2 unique players
-            if (deduped.Count > 2)
-            {
-                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory.DeduplicatePlayers] Found {deduped.Count} unique players, taking only first 2 for 1v1");
-                deduped = deduped.Take(2).ToList();
-            }
+            // Extract players from indices:
+            // Player 1: nickname at [0], tag at [2]
+            // Player 2: nickname at [3], tag at [5]
+            var player1Nickname = matchList[0].Groups["name"].Value;
+            var player1Tag = matchList[2].Groups["name"].Value;
 
-            return deduped;
+            var player2Nickname = matchList[3].Groups["name"].Value;
+            var player2Tag = matchList[5].Groups["name"].Value;
+
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory.ExtractPlayerInfo] Extracted: P1Nick={player1Nickname}, P1Tag={player1Tag}, P2Nick={player2Nickname}, P2Tag={player2Tag}, CreationStrategy={creationStrategy}");
+
+            return new LobbyPlayerInfo(player1Nickname, player1Tag, player2Nickname, player2Tag, creationStrategy);
         }
 
-        private void ValidateLobbyFormat(List<RegexMatch> playerMatches)
+        private Team CreateTeam(string teamName, string nickname, string tag)
         {
-            if (playerMatches.Count < 2)
-            {
-                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Invalid match count. Expected at least 2 unique players, found {playerMatches.Count}. Matches: {string.Join(", ", playerMatches.Select(m => m.Value))}");
-                throw new InvalidOperationException($"Expected at least 2 unique player names for 1v1, but found {playerMatches.Count}. Unsupported lobby format or player count.");
-            }
-        }
-
-        private Team CreateTeam(string teamName, List<RegexMatch> playerMatches, bool team1Index)
-        {
-            int playerIndex = team1Index ? 0 : 1;
-
-            if (playerIndex >= playerMatches.Count)
-            {
-                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Index out of bounds: playerIdx={playerIndex}, total unique players={playerMatches.Count}");
-                throw new InvalidOperationException($"Failed to extract player at index {playerIndex} from {playerMatches.Count} unique players");
-            }
-
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] CreateTeam {teamName}: using player[{playerIndex}]={playerMatches[playerIndex].Value}");
-
-            var rawNickName = playerMatches[playerIndex].Groups["name"].Value;
-            var displayNickName = rawNickName.Replace('_', '#');
+            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory.CreateTeam] {teamName}: NickName={nickname}, Tag={tag}");
 
             var player = new Player
             {
-                NickName = displayNickName,
-                Tag = playerMatches[playerIndex].Groups["name"].Value
+                NickName = nickname,
+                Tag = tag
             };
-
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Created player: NickName={player.NickName} (raw: {rawNickName}), Tag={player.Tag}");
 
             return new(teamName) { Players = [player] };
         }

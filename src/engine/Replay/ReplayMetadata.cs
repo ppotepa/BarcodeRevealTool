@@ -12,6 +12,10 @@ namespace BarcodeRevealTool.Replay
         public DateTime GameDate { get; set; }
         public string? SC2ClientVersion { get; set; }
         public DateTime LastModified { get; internal set; }
+        /// <summary>
+        /// Winner's player name/tag from the replay (e.g., "Player1#123" or "Player2#456")
+        /// </summary>
+        public string? Winner { get; set; }
 
         /// <summary>
         /// Compute a deterministic GUID based on replay name and game date.
