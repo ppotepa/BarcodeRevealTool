@@ -1,56 +1,44 @@
-using BarcodeRevealTool.Adapters;
-using BarcodeRevealTool.Engine;
 using BarcodeRevealTool.Engine.Abstractions;
-using BarcodeRevealTool.Engine.Replay;
-using BarcodeRevealTool.Game;
-using BarcodeRevealTool.Game.Lobbies.Strategies;
-using BarcodeRevealTool.Services;
+using BarcodeRevealTool.Engine.Application;
+using BarcodeRevealTool.Engine.Application.Abstractions;
+using BarcodeRevealTool.Engine.Application.Lobbies;
+using BarcodeRevealTool.Engine.Application.Monitoring;
+using BarcodeRevealTool.Engine.Application.Services;
+using BarcodeRevealTool.Engine.Config;
+using BarcodeRevealTool.Engine.Domain.Abstractions;
+using BarcodeRevealTool.Engine.Domain.Services;
+using BarcodeRevealTool.Engine.Game;
+using BarcodeRevealTool.Engine.Infrastructure.Data;
+using BarcodeRevealTool.Engine.Presentation;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Sc2Pulse;
 
 namespace BarcodeRevealTool.Engine.Extensions
 {
-    /// <summary>
-    /// Extension methods for registering BarcodeRevealTool engine services
-    /// </summary>
     public static class ServiceExtensions
     {
-        /// <summary>
-        /// Add all BarcodeRevealTool engine services to the dependency injection container
-        /// </summary>
-        public static IServiceCollection AddBarcodeRevealEngine(this IServiceCollection services)
+        public static IServiceCollection AddBarcodeRevealEngine(this IServiceCollection services, IConfiguration configuration)
         {
-            // Register AppSettings from configuration
             services.AddSingleton(sp =>
             {
-                var config = sp.GetRequiredService<IConfiguration>();
-                var appSettings = new AppSettings();
-                config.GetSection("barcodeReveal").Bind(appSettings);
-                return appSettings;
+                var settings = new AppSettings();
+                configuration.GetSection("barcodeReveal").Bind(settings);
+                return settings;
             });
 
-            // User identification strategy
-            services.AddSingleton<IUserIdentificationStrategy>(sp =>
-                new ConfigBasedUserStrategy(sp.GetRequiredService<AppSettings>()));
+            services.AddSingleton<IGameStateMonitor, GameStateMonitor>();
+            services.AddSingleton<IGameLobbyFactory, GameLobbyFactory>();
+            services.AddSingleton<ILobbyProcessor, LobbyProcessor>();
 
-            // Core engine
-            services.AddScoped<GameEngine>();
+            services.AddSingleton<IReplayRepository, ReplayDataAccess>();
+            services.AddSingleton<IReplayPersistence>(sp => (ReplayDataAccess)sp.GetRequiredService<IReplayRepository>());
 
-            // Game logic
-            services.AddScoped<GameLobbyFactory>();
+            services.AddSingleton<IMatchHistoryService, MatchHistoryService>();
+            services.AddSingleton<IBuildOrderService, BuildOrderService>();
+            services.AddSingleton<IOpponentProfileService, OpponentProfileService>();
 
-            // Database and queries
-            services.AddScoped<IReplayQueryService, ReplayQueryService>();
-            services.AddScoped<IBuildOrderCacheManager, BuildOrderCacheManager>();
-            services.AddScoped<IReplayCacheService, ReplayCacheService>();
-
-            // Services
-            services.AddScoped<IReplayService, ReplayService>();
-            services.AddScoped<IGameLobbyFactory, GameLobbyFactoryAdapter>();
-
-            // External clients
-            services.AddTransient<Sc2PulseClient>();
+            services.AddSingleton<IReplaySyncService, ReplaySyncService>();
+            services.AddSingleton<GameOrchestrator>();
 
             return services;
         }

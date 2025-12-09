@@ -50,20 +50,18 @@ On first run: scans and caches all replays (~1 minute per 500 replays). Subseque
 ## Code
 
 **Architecture:**
-- **BarcodeRevealTool.Engine** - Core game engine logic, UI-agnostic
-  - `GameEngine.cs` - Game state machine and replay sync
-  - `Abstractions/` - IOutputProvider, IReplayService, IGameLobbyFactory interfaces
-  
-- **BarcodeRevealTool.ConsoleApp** - Minimal console application with Spectre.Console UI
-  - `UI/SpectreConsoleOutputProvider.cs` - Colorful console output implementation
-  - `Adapters/GameLobbyFactoryAdapter.cs` - Wraps GameLobbyFactory for engine
-  - `Services/ReplayService.cs` - Replay cache/sync operations
-  - `Program.cs` - Dependency injection setup
+- **BarcodeRevealTool.Engine** – Cleanly layered and UI-agnostic
+  - `Application/` – Orchestration services (`GameOrchestrator`, `GameStateMonitor`, `ReplaySyncService`, `LobbyProcessor`)
+  - `Domain/` – Match/build-order value objects plus analysis services (`MatchHistoryService`, `BuildOrderService`, `OpponentProfileService`)
+  - `Presentation/` – Renderer interfaces for state, history, builds, and errors
+  - `Infrastructure/` – `ReplayDataAccess` adapter exposing repository/persistence abstractions over `ReplayDatabase`
+  - `Game/Lobbies/` – Lobby parsing and user-strategy utilities
+  - `Replay/` – Low-level replay decoding and SQLite storage (`BuildOrderReader`, `ReplayDatabase`)
 
-**Supporting Classes:**
-- **GameLobbyFactory.cs** - Parse lobby file  
-- **BuildOrderReader.cs** - Extract builds from replays  
-- **ReplayDatabase.cs** - SQLite storage and queries
+- **BarcodeRevealTool.ConsoleApp** – Spectre.Console UI host
+  - `UI/SpectreConsoleOutputProvider.cs` implements the renderer interfaces
+  - `Program.cs` wires DI, builds `GameOrchestrator`, and handles lifetime/cancellation
+  - `Adapters/GameLobbyFactoryAdapter.cs` exposes existing lobby factory to the engine
 
 Database: Single `replays.db` with insert-only policy. Stores players, map, date, SC2 version, and build orders.
 

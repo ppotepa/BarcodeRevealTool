@@ -1,9 +1,9 @@
-namespace BarcodeRevealTool.Game
+using System.Collections.Generic;
+
+namespace BarcodeRevealTool.Engine.Game
 {
-    public record Team(string name)
+    public class Team
     {
-        public HashSet<Player> Players { get; init; } = new HashSet<Player>();
-        public override string ToString()
-            => $"Team: {name}, Players: {string.Join(", ", Players)}";
+        public List<Player> Players { get; } = new();
     }
 }

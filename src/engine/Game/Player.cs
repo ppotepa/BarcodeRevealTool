@@ -1,15 +1,9 @@
-namespace BarcodeRevealTool.Game
+namespace BarcodeRevealTool.Engine.Game
 {
-    public record Player()
+    public class Player
     {
-        public Player(string nickName, string tag) : this()
-        {
-            NickName = nickName ?? throw new ArgumentNullException(nameof(nickName));
-            Tag = tag ?? throw new ArgumentNullException(nameof(tag));
-        }
-
-        public required string NickName { get; set; }
-        public required string Tag { get; set; }
-        public override string ToString() => $"Name : {NickName}, BattleTag: {Tag}";
+        public string NickName { get; set; } = string.Empty;
+        public string Tag { get; set; } = string.Empty;
+        public string Race { get; set; } = "Unknown";
     }
 }

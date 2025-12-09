@@ -1,19 +1,15 @@
-using BarcodeRevealTool.Game;
-using Sc2Pulse.Models;
+using BarcodeRevealTool.Engine.Game;
 
-namespace BarcodeRevealTool.game.lobbies
+namespace BarcodeRevealTool.Engine.Game.Lobbies
 {
-    public interface ISoloGameLobby : IGameLobby
-    {
-        Team? Team2 { get; }
-        LadderDistinctCharacter? AdditionalData { get; }
-        BuildOrderEntry? LastBuildOrderEntry { get; set; }
-        Queue? DetectedQueue { get; set; }
-        Task EnsureAdditionalDataLoadedAsync();
-    }
-
     public interface IGameLobby
     {
-        Team? Team1 { get; }
+        Team Team1 { get; }
+        Team Team2 { get; }
+    }
+
+    public interface ISoloGameLobby : IGameLobby
+    {
+        string OpponentTag { get; }
     }
 }
