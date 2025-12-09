@@ -126,10 +126,11 @@ namespace BarcodeRevealTool.UI.Console
 
             foreach (var player in team.Players)
             {
-                var display = string.IsNullOrWhiteSpace(player.NickName) ? player.Tag : player.NickName;
-                var trueNickname = player.Tag.Split('#').FirstOrDefault() ?? player.NickName ?? "Unknown";
+                // Use the actual nickname from the player object
+                var displayName = player.NickName ?? "Unknown";
+                var playerTag = player.Tag ?? "Unknown";
                 var otherTag = otherTeam?.Players.FirstOrDefault()?.Tag ?? "Unknown";
-                AnsiConsole.MarkupLine($"  [cyan]-[/] {Escape(display)} [grey](Nick: {Escape(trueNickname)}, BattleTag: {Escape(otherTag)})[/]");
+                AnsiConsole.MarkupLine($"  [cyan]-[/] {Escape(displayName)} [grey](Nick: {Escape(displayName)}, BattleTag: {Escape(playerTag)})[/]");
             }
         }
 

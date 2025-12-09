@@ -2,6 +2,7 @@ using System;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Serilog;
 
 namespace BarcodeRevealTool.Engine.Game
 {
@@ -14,6 +15,7 @@ namespace BarcodeRevealTool.Engine.Game
         private static readonly HttpClient Client = new();
         private const string LocalGameServiceUrl = "http://localhost:6119/game";
         private const int TimeoutSeconds = 5;
+        private static readonly ILogger Logger = Log.ForContext<GameTypeDetector>();
 
         /// <summary>
         /// Detect the current game type by querying SC2 game service.
@@ -28,8 +30,7 @@ namespace BarcodeRevealTool.Engine.Game
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[GameTypeDetector] SC2 game service returned {response.StatusCode}");
+                    Logger.Debug("SC2 game service returned {StatusCode}", response.StatusCode);
                     return null;
                 }
 
@@ -38,39 +39,33 @@ namespace BarcodeRevealTool.Engine.Game
 
                 if (gameInfo?.Type == null)
                 {
-                    System.Diagnostics.Debug.WriteLine(
-                        "[GameTypeDetector] Game info returned null type");
+                    Logger.Debug("Game info returned null type");
                     return null;
                 }
 
                 var detectedType = ParseGameType(gameInfo.Type);
-                System.Diagnostics.Debug.WriteLine(
-                    $"[GameTypeDetector] Detected game type: {gameInfo.Type} -> {detectedType}");
+                Logger.Debug("Detected game type: {RawType} -> {Detected}", gameInfo.Type, detectedType);
 
                 return detectedType;
             }
             catch (HttpRequestException ex)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[GameTypeDetector] Connection failed (SC2 service unavailable): {ex.Message}");
+                Logger.Warning(ex, "Connection failed (SC2 service unavailable)");
                 return null;
             }
             catch (TimeoutException)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    "[GameTypeDetector] Timeout querying SC2 game service");
+                Logger.Warning("Timeout querying SC2 game service");
                 return null;
             }
             catch (JsonException ex)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[GameTypeDetector] Failed to parse game info JSON: {ex.Message}");
+                Logger.Error(ex, "Failed to parse game info JSON");
                 return null;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[GameTypeDetector] Unexpected error: {ex.Message}");
+                Logger.Error(ex, "Unexpected error while detecting game type");
                 return null;
             }
         }

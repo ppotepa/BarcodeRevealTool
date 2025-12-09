@@ -1,9 +1,11 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using BarcodeRevealTool.Engine.Abstractions;
 using BarcodeRevealTool.Engine.Config;
 using BarcodeRevealTool.Engine.Game.Lobbies;
 using BarcodeRevealTool.Engine.Game.Lobbies.Strategies;
+using Serilog;
 
 namespace BarcodeRevealTool.Engine.Game
 {
@@ -14,6 +16,8 @@ namespace BarcodeRevealTool.Engine.Game
     /// </summary>
     public class GameLobbyFactory : IGameLobbyFactory
     {
+        private static readonly ILogger Logger = Log.ForContext<GameLobbyFactory>();
+
         public ISoloGameLobby? CreateLobby(byte[] lobbyBytes, AppSettings settings)
         {
             if (lobbyBytes is null || lobbyBytes.Length == 0)
@@ -23,7 +27,7 @@ namespace BarcodeRevealTool.Engine.Game
 
             // Synchronously detect game type (blocking, but necessary for lobby creation)
             var gameType = DetectGameTypeSynchronous();
-            System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Detected game type: {gameType}");
+            Logger.Debug("Detected game type: {GameType}", gameType);
 
             // Extract players based on detected game type using specialized strategies
             var (yourTeam, opponentTeam) = ExtractPlayersByGameType(lobbyBytes, settings, gameType);
@@ -65,7 +69,7 @@ namespace BarcodeRevealTool.Engine.Game
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[GameLobbyFactory] Failed to detect game type: {ex.Message}");
+                Logger.Error(ex, "Failed to detect game type");
                 return null;
             }
         }
@@ -90,7 +94,7 @@ namespace BarcodeRevealTool.Engine.Game
         /// </summary>
         private static ISoloGameLobby CreateSolo1v1Lobby(Team yourTeam, Team opponentTeam)
         {
-            System.Diagnostics.Debug.WriteLine("[GameLobbyFactory] Creating Solo 1v1 lobby");
+            Logger.Debug("Creating Solo 1v1 lobby");
             var opponentTag = opponentTeam.Players.FirstOrDefault()?.Tag ?? "unknown#0000";
             return new Lobbies.GameLobby(yourTeam, opponentTeam, opponentTag);
         }
@@ -100,7 +104,7 @@ namespace BarcodeRevealTool.Engine.Game
         /// </summary>
         private static ISoloGameLobby CreateTeam2v2Lobby(Team yourTeam, Team opponentTeam)
         {
-            System.Diagnostics.Debug.WriteLine("[GameLobbyFactory] Creating Team 2v2 lobby");
+            Logger.Debug("Creating Team 2v2 lobby");
             var opponentTag = opponentTeam.Players.FirstOrDefault()?.Tag ?? "unknown#0000";
             return new Lobbies.GameLobby(yourTeam, opponentTeam, opponentTag);
         }
@@ -110,7 +114,7 @@ namespace BarcodeRevealTool.Engine.Game
         /// </summary>
         private static ISoloGameLobby CreateTeam3v3Lobby(Team yourTeam, Team opponentTeam)
         {
-            System.Diagnostics.Debug.WriteLine("[GameLobbyFactory] Creating Team 3v3 lobby");
+            Logger.Debug("Creating Team 3v3 lobby");
             var opponentTag = opponentTeam.Players.FirstOrDefault()?.Tag ?? "unknown#0000";
             return new Lobbies.GameLobby(yourTeam, opponentTeam, opponentTag);
         }
@@ -120,7 +124,7 @@ namespace BarcodeRevealTool.Engine.Game
         /// </summary>
         private static ISoloGameLobby CreateTeam4v4Lobby(Team yourTeam, Team opponentTeam)
         {
-            System.Diagnostics.Debug.WriteLine("[GameLobbyFactory] Creating Team 4v4 lobby");
+            Logger.Debug("Creating Team 4v4 lobby");
             var opponentTag = opponentTeam.Players.FirstOrDefault()?.Tag ?? "unknown#0000";
             return new Lobbies.GameLobby(yourTeam, opponentTeam, opponentTag);
         }
