@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using BarcodeRevealTool.Engine.Domain.Abstractions;
 using BarcodeRevealTool.Engine.Domain.Models;
 using BarcodeRevealTool.Persistence.Database;
+using BarcodeRevealTool.Persistence.Replay;
 using Serilog;
 
 namespace BarcodeRevealTool.Persistence.Cache
@@ -18,15 +19,17 @@ namespace BarcodeRevealTool.Persistence.Cache
     public class CacheManager : ICacheManager
     {
         private readonly ReplayDatabase _database;
+        private readonly ReplayCacheService _replayCacheService;
         private readonly ILogger _logger = Log.ForContext<CacheManager>();
         private FileStream? _lockFileStream;
         private readonly string _lockFilePath;
         private bool _isValid = false;
         private bool _initialized = false;
 
-        public CacheManager(ReplayDatabase database)
+        public CacheManager(ReplayDatabase database, ReplayCacheService replayCacheService)
         {
             _database = database ?? throw new ArgumentNullException(nameof(database));
+            _replayCacheService = replayCacheService ?? throw new ArgumentNullException(nameof(replayCacheService));
             _lockFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.lock");
         }
 
@@ -70,17 +73,8 @@ namespace BarcodeRevealTool.Persistence.Cache
                     return;
                 }
 
-                _logger.Information("Syncing cache from disk: {ReplayFolder} (recursive: {Recursive})", replayFolder, recursive);
-
-                var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-                var replayFiles = Directory.GetFiles(replayFolder, "*.SC2Replay", searchOption);
-
-                _logger.Information("Found {Count} replay files on disk", replayFiles.Length);
-
-                var missingFiles = _database.GetCacheStatistics();
-                // Note: actual sync logic would compare disk files with cached metadata
-                // This is a placeholder for the full implementation
-
+                _logger.Information("Syncing cache from disk: {ReplayFolder}", replayFolder);
+                await _replayCacheService.InitializeCacheAsync();
                 _logger.Information("Cache synchronization completed");
             }
             catch (Exception ex)
