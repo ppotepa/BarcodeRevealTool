@@ -63,16 +63,127 @@ namespace BarcodeRevealTool.UI.Console
 
         public void RenderOpponentProfile(OpponentProfile profile)
         {
-            // Extract nickname from tag (part before the #)
-            var nickname = profile.OpponentTag.Split('#').FirstOrDefault() ?? "Unknown";
+            var content = new List<string>();
 
-            var panel = new Panel(
-                $"[yellow]Opponent:[/] {Escape(nickname)} [grey](Nick: {Escape(nickname)}, BattleTag: {Escape(profile.OpponentTag)})[/]{Environment.NewLine}" +
-                $"[yellow]Win Rate:[/] {profile.VersusYou.Display}{Environment.NewLine}" +
-                $"[yellow]Preferred Race:[/] {Escape(profile.PreferredRaces.Primary)}{Environment.NewLine}" +
-                $"[yellow]Preferred Maps:[/] {string.Join(", ", profile.FavoriteMaps)}{Environment.NewLine}" +
-                $"[yellow]Last Met:[/] {profile.LastPlayed:g}");
-            panel.Header = new PanelHeader("Opponent Profile", Justify.Center);
+            // Player Identity Section
+            var nickname = profile.OpponentTag.Split('#').FirstOrDefault() ?? "Unknown";
+            content.Add($"[bold cyan]⚔ {Escape(nickname)}[/] [grey]{Escape(profile.OpponentTag)}[/]");
+            content.Add("");
+
+            // SC2Pulse Live Stats Section
+            if (profile.LiveStats != null)
+            {
+                content.Add("[bold yellow]Current Ladder Status[/]");
+                var leagueColor = profile.LiveStats.CurrentLeague switch
+                {
+                    "GRANDMASTER" => "[bold red]",
+                    "MASTER" => "[bold magenta]",
+                    "DIAMOND" => "[bold blue]",
+                    "PLATINUM" => "[cyan]",
+                    "GOLD" => "[yellow]",
+                    "SILVER" => "[white]",
+                    _ => "[grey]"
+                };
+                var leagueEnd = profile.LiveStats.CurrentLeague switch
+                {
+                    "GRANDMASTER" => "[/]",
+                    "MASTER" => "[/]",
+                    "DIAMOND" => "[/]",
+                    "PLATINUM" => "[/]",
+                    "GOLD" => "[/]",
+                    "SILVER" => "[/]",
+                    _ => "[/]"
+                };
+
+                var mmrDisplay = profile.LiveStats.CurrentMMR.HasValue
+                    ? $"{leagueColor}{profile.LiveStats.CurrentLeague}{leagueEnd} {profile.LiveStats.CurrentMMR} MMR"
+                    : "[grey]Not ranked[/]";
+
+                content.Add($"  League: {mmrDisplay}");
+                content.Add($"  Games Played: [bold]{profile.LiveStats.TotalGamesPlayed}[/]");
+
+                if (profile.LiveStats.HighestMMR.HasValue)
+                {
+                    content.Add($"  Peak: {profile.LiveStats.HighestLeague} {profile.LiveStats.HighestMMR} MMR");
+                }
+                content.Add("");
+            }
+
+            // Head-to-Head Record Section
+            content.Add("[bold yellow]Head-to-Head Record[/]");
+            content.Add($"  Versus You: [bold green]{profile.VersusYou.Wins}W[/] - [bold red]{profile.VersusYou.Losses}L[/] ({profile.VersusYou.Display})");
+            content.Add("");
+
+            // Opponent Preferences Section
+            content.Add("[bold yellow]Preferred Playstyle[/]");
+
+            // Show race stats if available from SC2Pulse
+            if (profile.LiveStats?.RaceStats != null)
+            {
+                var raceStats = profile.LiveStats.RaceStats;
+
+                // Main race with win/loss
+                var mainRace = profile.PreferredRaces.Primary;
+                content.Add($"  Main Race: [bold cyan]{Escape(mainRace)}[/]");
+
+                // Show win rates for each race
+                var terranDisplay = $"Terran: {raceStats.Terran.Wins}W-{raceStats.Terran.Losses}L";
+                var protossDisplay = $"Protoss: {raceStats.Protoss.Wins}W-{raceStats.Protoss.Losses}L";
+                var zergDisplay = $"Zerg: {raceStats.Zerg.Wins}W-{raceStats.Zerg.Losses}L";
+
+                content.Add($"    ({terranDisplay} | {protossDisplay} | {zergDisplay})");
+            }
+            else
+            {
+                content.Add($"  Main Race: {Escape(profile.PreferredRaces.Primary)}");
+            }
+
+            if (!string.IsNullOrEmpty(profile.PreferredRaces.Secondary))
+            {
+                content.Add($"  Secondary: {Escape(profile.PreferredRaces.Secondary)}");
+            }
+            if (!string.IsNullOrEmpty(profile.PreferredRaces.Tertiary))
+            {
+                content.Add($"  Tertiary: {Escape(profile.PreferredRaces.Tertiary)}");
+            }
+            content.Add("");
+
+            // Opponent Preferences Section
+            content.Add("[bold yellow]Preferred Playstyle[/]");
+            content.Add($"  Main Race: {Escape(profile.PreferredRaces.Primary)}");
+            if (!string.IsNullOrEmpty(profile.PreferredRaces.Secondary))
+            {
+                content.Add($"  Secondary: {Escape(profile.PreferredRaces.Secondary)}");
+            }
+            if (!string.IsNullOrEmpty(profile.PreferredRaces.Tertiary))
+            {
+                content.Add($"  Tertiary: {Escape(profile.PreferredRaces.Tertiary)}");
+            }
+            content.Add("");
+
+            // Recent Activity Section
+            if (profile.LastPlayed != DateTime.MinValue)
+            {
+                var daysAgo = (int)(DateTime.UtcNow - profile.LastPlayed).TotalDays;
+                var timeDisplay = daysAgo == 0 ? "Today" : daysAgo == 1 ? "Yesterday" : $"{daysAgo}d ago";
+                content.Add("[bold yellow]Recent Activity[/]");
+                content.Add($"  Last Played: [yellow]{timeDisplay}[/]");
+                content.Add("");
+            }
+
+            // Build Order Pattern Section
+            if (!string.IsNullOrEmpty(profile.CurrentBuildPattern.MostFrequentBuild))
+            {
+                content.Add("[bold yellow]Favorite Opening[/]");
+                content.Add($"  Build: [cyan]{Escape(profile.CurrentBuildPattern.MostFrequentBuild)}[/]");
+                content.Add($"  Last Observed: {profile.CurrentBuildPattern.LastAnalyzed:g}");
+            }
+
+            var panel = new Panel(string.Join(Environment.NewLine, content));
+            panel.Header = new PanelHeader("[bold]⚔ OPPONENT PROFILE[/]", Justify.Center);
+            panel.Border = BoxBorder.Rounded;
+            panel.Expand = true;
+
             AnsiConsole.Write(panel);
         }
 

@@ -94,7 +94,7 @@ namespace BarcodeRevealTool.Engine.Application
             var pattern = _buildOrderService.AnalyzePattern(opponent.Tag, steps);
             _buildOrderRenderer.RenderBuildPattern(pattern);
 
-            var profile = _profileService.BuildProfile(you.Tag, opponent.Tag);
+            var profile = await _profileService.BuildProfileAsync(you.Tag, opponent.Tag, cancellationToken).ConfigureAwait(false);
             _historyRenderer.RenderOpponentProfile(profile);
         }
     }

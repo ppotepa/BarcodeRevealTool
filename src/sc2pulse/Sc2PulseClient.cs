@@ -118,6 +118,53 @@ namespace Sc2Pulse
             return await resp.Content.ReadFromJsonAsync<List<ExternalLinkResolveResult>>(_jsonOptions, cancellationToken).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// GET /api/character/{characterId}/stats/full - Fetch complete player statistics.
+        /// Returns array of stat entries with overall and race-specific stats across different queue types.
+        /// Queue types: 201=1v1, 202=2v2, 203=3v3, 204=4v4
+        /// Races: null=overall, "TERRAN", "PROTOSS", "ZERG"
+        /// </summary>
+        public async Task<List<PlayerStatEntry>?> GetCharacterFullStatsAsync(long characterId, CancellationToken cancellationToken = default)
+        {
+            var url = $"/sc2/api/character/{characterId}/stats/full";
+            var resp = await _httpClient.GetAsync(url, cancellationToken).ConfigureAwait(false);
+            resp.EnsureSuccessStatusCode();
+            return await resp.Content.ReadFromJsonAsync<List<PlayerStatEntry>>(_jsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+
         #endregion Character Endpoints
+
+        #region Season Endpoints
+
+        /// <summary>
+        /// GET /api/seasons - Fetch all seasons; returns array of Season.
+        /// Each season has region-specific information (KR, EU, US, CN).
+        /// </summary>
+        public async Task<List<Season>?> GetSeasonsAsync(CancellationToken cancellationToken = default)
+        {
+            var url = "/sc2/api/seasons";
+            var resp = await _httpClient.GetAsync(url, cancellationToken).ConfigureAwait(false);
+            resp.EnsureSuccessStatusCode();
+            return await resp.Content.ReadFromJsonAsync<List<Season>>(_jsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+
+        #endregion Season Endpoints
+
+        #region Team Endpoints
+
+        /// <summary>
+        /// GET /api/character-teams - Fetch teams for a character in current or specific season.
+        /// Query parameters can include characterId, season, queueType for filtering.
+        /// Returns array of team data with full player stats and win/loss records.
+        /// </summary>
+        public async Task<List<CharacterTeamStats>?> GetCharacterTeamsSeasonAsync(long characterId, long seasonId, CancellationToken cancellationToken = default)
+        {
+            var url = $"/sc2/api/character-teams?characterId={characterId}&season={seasonId}";
+            var resp = await _httpClient.GetAsync(url, cancellationToken).ConfigureAwait(false);
+            resp.EnsureSuccessStatusCode();
+            return await resp.Content.ReadFromJsonAsync<List<CharacterTeamStats>>(_jsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+
+        #endregion Team Endpoints
     }
 }

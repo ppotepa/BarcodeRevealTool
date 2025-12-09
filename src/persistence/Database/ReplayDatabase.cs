@@ -9,6 +9,7 @@ using SqlKata;
 using SqlKata.Compilers;
 using SqlKata.Execution;
 using Serilog;
+using BarcodeRevealTool.Persistence.Schema;
 
 namespace BarcodeRevealTool.Persistence.Database
 {
@@ -61,19 +62,17 @@ namespace BarcodeRevealTool.Persistence.Database
         private void InitializeDatabase()
         {
             using var connection = CreateConnection();
-            _logger.Information("Initializing database schema...");
+            _logger.Information("Initializing cache database schema...");
 
             try
             {
-                // Execute raw SQL for schema creation (DDL)
-                using var command = connection.CreateCommand();
-                command.CommandText = Persistence.Schema.DatabaseSchema.CreateAllTables;
-                command.ExecuteNonQuery();
-                _logger.Information("Database schema initialized successfully");
+                // Execute schema files for cache database - using same Players and ReplayFiles tables
+                SchemaLoader.ExecuteSchemas(connection, "Players.sql", "ReplayFiles.sql");
+                _logger.Information("Cache database schema initialized successfully");
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Failed to initialize database schema");
+                _logger.Error(ex, "Failed to initialize cache database schema");
                 throw;
             }
         }
@@ -93,7 +92,7 @@ namespace BarcodeRevealTool.Persistence.Database
                     .Select("Map", "YourRace", "OpponentRace", "Result", "GameDate", "OpponentNickname");
 
                 var compiled = _compiler.Compile(query);
-                
+
                 using var command = connection.CreateCommand();
                 command.CommandText = compiled.Sql;
                 foreach (var binding in compiled.Bindings)

@@ -10,6 +10,11 @@ using Serilog;
 namespace BarcodeRevealTool.Persistence.Replay
 {
     /// <summary>
+    /// Callback for cache operation progress.
+    /// </summary>
+    public delegate void CacheProgressCallback(string phase, int current, int total, string? message = null);
+
+    /// <summary>
     /// Service for caching StarCraft II replay files.
     /// Handles scanning replay folders, extracting metadata, and storing in database.
     /// </summary>
@@ -19,6 +24,8 @@ namespace BarcodeRevealTool.Persistence.Replay
         private readonly ReplayQueryService _queryService;
         private readonly ILogger _logger = Log.ForContext<ReplayCacheService>();
         private string CacheLockFile => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.lock");
+
+        public event CacheProgressCallback? OnProgress;
 
         public ReplayCacheService(IConfiguration configuration, ReplayQueryService queryService)
         {
@@ -56,9 +63,6 @@ namespace BarcodeRevealTool.Persistence.Replay
             if (allReplayFiles.Length > 0)
             {
                 await ProcessReplaysAsync(allReplayFiles);
-                
-                // Mark cache as complete
-                File.WriteAllText(CacheLockFile, DateTime.UtcNow.ToString("O"));
                 _logger.Information("Cache initialization complete");
             }
         }
@@ -100,27 +104,42 @@ namespace BarcodeRevealTool.Persistence.Replay
         private async Task ProcessReplaysAsync(string[] replayFiles)
         {
             int maxParallelism = GetOptimalDegreeOfParallelism();
-            
+
+            _logger.Information("════════════════════════════════════════════════════════════════");
+            _logger.Information("Caching {ReplayCount} Replays ({ParallelismCount} Parallel Threads)",
+                replayFiles.Length, maxParallelism);
+            _logger.Information("════════════════════════════════════════════════════════════════");
+
             _logger.Information("Processing {ReplayCount} replays with {Parallelism} parallel threads",
                 replayFiles.Length, maxParallelism);
 
             // Stage 1: Load metadata sequentially
+            _logger.Information("Phase 1: Extracting Metadata from Replays");
+
             var metadataList = await ReplayMetadataExtractor.ExtractMetadataFromFilesAsync(
                 replayFiles,
-                maxParallelism);
+                maxParallelism,
+                (current, total) =>
+                {
+                    OnProgress?.Invoke("Extracting", current, total, $"Processing {current}/{total}");
+                    DisplayProgress("Metadata Extraction", current, total, "files");
+                });
 
             _logger.Information("Extracted metadata for {MetadataCount} replays", metadataList.Count);
 
             // Stage 2: Insert into database in parallel
+            _logger.Information("Phase 2: Storing Replays in Database");
+
             var semaphore = new System.Threading.SemaphoreSlim(maxParallelism);
             var tasks = new List<Task>();
             int processedCount = 0;
             var lockObj = new object();
+            var startTime = DateTime.UtcNow;
 
             foreach (var (filePath, metadata) in metadataList)
             {
                 await semaphore.WaitAsync();
-                
+
                 tasks.Add(Task.Run(() =>
                 {
                     try
@@ -139,10 +158,20 @@ namespace BarcodeRevealTool.Persistence.Replay
                         lock (lockObj)
                         {
                             processedCount++;
-                            if (processedCount % 10 == 0)
+                            OnProgress?.Invoke("Storing", processedCount, metadataList.Count,
+                                $"Stored {processedCount}/{metadataList.Count}");
+
+                            if (processedCount % 50 == 0 || processedCount == metadataList.Count)
                             {
-                                _logger.Debug("Processed {ProcessedCount}/{TotalCount} replays",
-                                    processedCount, metadataList.Count);
+                                var elapsed = DateTime.UtcNow - startTime;
+                                var replayPerSecond = processedCount > 0 ? processedCount / elapsed.TotalSeconds : 0;
+                                var remaining = metadataList.Count - processedCount;
+                                var eta = replayPerSecond > 0 ?
+                                    TimeSpan.FromSeconds(remaining / replayPerSecond) :
+                                    TimeSpan.Zero;
+
+                                DisplayProgress("Database Storage", processedCount, metadataList.Count, "replays",
+                                    $"{replayPerSecond:F1} replays/sec | ETA: {eta.Hours:D2}:{eta.Minutes:D2}:{eta.Seconds:D2}");
                             }
                         }
                         semaphore.Release();
@@ -155,7 +184,38 @@ namespace BarcodeRevealTool.Persistence.Replay
                 await Task.WhenAll(tasks);
             }
 
-            _logger.Information("Cache processing complete");
+            _logger.Information("✓ Cache processing complete - {ProcessedCount} replays stored", processedCount);
+        }
+
+        /// <summary>
+        /// Log progress information to Serilog.
+        /// Periodically logs progress at intervals to avoid log spam.
+        /// </summary>
+        private void DisplayProgress(string phase, int current, int total, string unit, string? extraInfo = null)
+        {
+            if (total <= 0)
+                return;
+
+            double percentage = (current / (double)total) * 100;
+
+            // Log at specific milestones: 0%, 25%, 50%, 75%, 100%, and every 50 items
+            bool isMilestone = percentage == 0 || percentage >= 100 ||
+                              (percentage % 25 < (1.0 / total * 100)) ||
+                              current % 50 == 0;
+
+            if (isMilestone)
+            {
+                if (string.IsNullOrEmpty(extraInfo))
+                {
+                    _logger.Information("{Phase}: {Percentage:F1}% ({Current}/{Total} {Unit})",
+                        phase, percentage, current, total, unit);
+                }
+                else
+                {
+                    _logger.Information("{Phase}: {Percentage:F1}% ({Current}/{Total} {Unit}) | {ExtraInfo}",
+                        phase, percentage, current, total, unit, extraInfo);
+                }
+            }
         }
 
         private int GetOptimalDegreeOfParallelism()

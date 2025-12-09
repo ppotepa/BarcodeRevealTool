@@ -1,4 +1,4 @@
-namespace BarcodeRevealTool.Persistence.Schema
+namespace BarcodeRevealTool.Persistence.Replay.Schema
 {
     /// <summary>
     /// SQL schema definitions for replay cache database

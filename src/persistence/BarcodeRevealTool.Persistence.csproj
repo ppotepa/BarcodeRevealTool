@@ -18,4 +18,8 @@
     <ProjectReference Include="..\engine\BarcodeRevealTool.Engine.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Schema\*.sql" />
+  </ItemGroup>
+
 </Project>

@@ -1,9 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using BarcodeRevealTool.Engine.Domain.Abstractions;
 using BarcodeRevealTool.Engine.Domain.Models;
 using BarcodeRevealTool.Persistence.Database;
@@ -44,7 +38,7 @@ namespace BarcodeRevealTool.Persistence.Cache
             try
             {
                 _logger.Information("Initializing CacheManager...");
-                
+
                 // Attempt to acquire lock
                 if (!AcquireLock())
                 {
@@ -53,7 +47,7 @@ namespace BarcodeRevealTool.Persistence.Cache
 
                 _isValid = true;
                 _initialized = true;
-                
+
                 _logger.Information("CacheManager initialized successfully");
             }
             catch (Exception ex)
@@ -128,7 +122,7 @@ namespace BarcodeRevealTool.Persistence.Cache
                 try
                 {
                     _logger.Debug("Attempting to acquire cache lock (attempt {Attempt}/{MaxRetries})", i + 1, maxRetries);
-                    
+
                     _lockFileStream = new FileStream(
                         _lockFilePath,
                         FileMode.Create,
@@ -144,7 +138,7 @@ namespace BarcodeRevealTool.Persistence.Cache
                 catch (IOException ex)
                 {
                     _logger.Warning(ex, "Failed to acquire cache lock (attempt {Attempt}/{MaxRetries})", i + 1, maxRetries);
-                    
+
                     if (i < maxRetries - 1)
                     {
                         Thread.Sleep(retryDelayMs);
@@ -169,12 +163,12 @@ namespace BarcodeRevealTool.Persistence.Cache
                 {
                     _lockFileStream.Dispose();
                     _lockFileStream = null;
-                    
+
                     if (File.Exists(_lockFilePath))
                     {
                         File.Delete(_lockFilePath);
                     }
-                    
+
                     _logger.Information("Cache lock released");
                 }
             }

@@ -35,6 +35,7 @@ namespace BarcodeRevealTool.Engine.Extensions
 
             services.AddSingleton<IMatchHistoryService, MatchHistoryService>();
             services.AddSingleton<IBuildOrderService, BuildOrderService>();
+            services.AddSingleton<ISc2PulsePlayerStatsService, Sc2PulsePlayerStatsService>();
             services.AddSingleton<IOpponentProfileService, OpponentProfileService>();
 
             services.AddSingleton<IReplaySyncService, ReplaySyncService>();
