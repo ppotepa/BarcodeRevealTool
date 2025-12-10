@@ -1,9 +1,9 @@
+using BarcodeRevealTool.Engine.Domain.Abstractions;
+using BarcodeRevealTool.Persistence.Cache;
+using BarcodeRevealTool.Persistence.Database;
+using BarcodeRevealTool.Persistence.Replay;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using BarcodeRevealTool.Engine.Domain.Abstractions;
-using BarcodeRevealTool.Persistence.Database;
-using BarcodeRevealTool.Persistence.Cache;
-using BarcodeRevealTool.Persistence.Replay;
 
 namespace BarcodeRevealTool.Persistence.Extensions
 {

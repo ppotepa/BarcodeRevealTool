@@ -19,6 +19,7 @@ namespace BarcodeRevealTool.Persistence.Cache
         private readonly string _lockFilePath;
         private bool _isValid = false;
         private bool _initialized = false;
+        private bool _fullSyncJustCompleted = false;
 
         public CacheManager(ReplayDatabase database, ReplayCacheService replayCacheService)
         {
@@ -26,6 +27,10 @@ namespace BarcodeRevealTool.Persistence.Cache
             _replayCacheService = replayCacheService ?? throw new ArgumentNullException(nameof(replayCacheService));
             _lockFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.lock");
         }
+
+        public bool WasFullSyncJustCompleted => _fullSyncJustCompleted;
+
+        public void ResetFullSyncFlag() => _fullSyncJustCompleted = false;
 
         public async Task InitializeAsync()
         {
@@ -40,7 +45,7 @@ namespace BarcodeRevealTool.Persistence.Cache
                 _logger.Information("Initializing CacheManager...");
 
                 // Attempt to acquire lock
-                if (!AcquireLock())
+                if (!await Task.Run(() => AcquireLock()))
                 {
                     throw new InvalidOperationException("Failed to acquire cache lock. Another instance may be running.");
                 }
@@ -69,11 +74,54 @@ namespace BarcodeRevealTool.Persistence.Cache
 
                 _logger.Information("Syncing cache from disk: {ReplayFolder}", replayFolder);
                 await _replayCacheService.InitializeCacheAsync();
+                _fullSyncJustCompleted = true;
                 _logger.Information("Cache synchronization completed");
             }
             catch (Exception ex)
             {
                 _logger.Error(ex, "Failed to sync cache from disk");
+                throw;
+            }
+        }
+
+        public async Task SyncMissingReplaysAsync(string replayFolder, bool recursive)
+        {
+            try
+            {
+                if (!Directory.Exists(replayFolder))
+                {
+                    _logger.Warning("Replay folder does not exist for incremental sync: {ReplayFolder}", replayFolder);
+                    return;
+                }
+
+                _logger.Information("Syncing missing replays from disk: {ReplayFolder}", replayFolder);
+                await _replayCacheService.SyncMissingReplaysAsync();
+                _logger.Information("Incremental replay synchronization completed");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to sync missing replays from disk");
+                throw;
+            }
+        }
+
+        public async Task SyncRecentReplayAsync(string replayFolder)
+        {
+            try
+            {
+                if (!Directory.Exists(replayFolder))
+                {
+                    _logger.Warning("Replay folder does not exist for recent sync: {ReplayFolder}", replayFolder);
+                    return;
+                }
+
+                _logger.Information("Syncing most recent replay from disk: {ReplayFolder}", replayFolder);
+                await _replayCacheService.SyncRecentReplayAsync();
+                _logger.Information("Recent replay synchronization completed");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to sync most recent replay from disk");
                 throw;
             }
         }
@@ -94,6 +142,20 @@ namespace BarcodeRevealTool.Persistence.Cache
         public bool IsCacheValid()
         {
             return _isValid && _initialized;
+        }
+
+        public bool IsCacheEmpty()
+        {
+            try
+            {
+                var stats = GetStatistics();
+                return stats.TotalMatches == 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to check if cache is empty");
+                return true; // Assume empty if we can't check
+            }
         }
 
         public IReadOnlyList<string> GetMissingReplayFiles(string[] diskFiles)
@@ -164,10 +226,10 @@ namespace BarcodeRevealTool.Persistence.Cache
                     _lockFileStream.Dispose();
                     _lockFileStream = null;
 
-                    if (File.Exists(_lockFilePath))
-                    {
-                        File.Delete(_lockFilePath);
-                    }
+                    // Keep the cache.lock file on disk so future runs know the cache
+                    // has been initialized. While the stream is open it still works
+                    // as a mutex; once released we overwrite it with a timestamp.
+                    File.WriteAllText(_lockFilePath, $"Initialized {DateTime.UtcNow:O}");
 
                     _logger.Information("Cache lock released");
                 }

@@ -1,8 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
+using BarcodeRevealTool.Engine.Config;
 using BarcodeRevealTool.Engine.Domain.Models;
 using Serilog;
 
@@ -13,24 +9,30 @@ namespace BarcodeRevealTool.Engine.Domain.Services
         private readonly IMatchHistoryService _matchHistoryService;
         private readonly IBuildOrderService _buildOrderService;
         private readonly ISc2PulsePlayerStatsService _pulseStatsService;
+        private readonly AppSettings _settings;
         private readonly ILogger _logger = Log.ForContext<OpponentProfileService>();
 
         public OpponentProfileService(
             IMatchHistoryService matchHistoryService,
             IBuildOrderService buildOrderService,
-            ISc2PulsePlayerStatsService pulseStatsService)
+            ISc2PulsePlayerStatsService pulseStatsService,
+            AppSettings settings)
         {
             _matchHistoryService = matchHistoryService;
             _buildOrderService = buildOrderService;
             _pulseStatsService = pulseStatsService;
+            _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         }
 
         public async Task<OpponentProfile> BuildProfileAsync(string yourTag, string opponentTag, CancellationToken cancellationToken = default)
         {
             _logger.Information("Building opponent profile for {OpponentTag}", opponentTag);
 
+            var matchLimit = Math.Max(1, _settings.Replays?.MatchHistoryLimit ?? 10);
+            var opponentToon = _matchHistoryService.GetLastKnownOpponentToon(opponentTag);
+
             // Gather local replay cache data synchronously
-            var history = _matchHistoryService.GetHistory(yourTag, opponentTag, 10);
+            var history = _matchHistoryService.GetHistory(yourTag, opponentTag, matchLimit, opponentToon);
             var stats = _matchHistoryService.Analyze(history);
             var build = _buildOrderService.GetRecentBuild(opponentTag, 20);
             var pattern = _buildOrderService.AnalyzePattern(opponentTag, build);
@@ -39,6 +41,7 @@ namespace BarcodeRevealTool.Engine.Domain.Services
 
             // Fetch live SC2Pulse data asynchronously - this is the source of truth
             SC2PulseStats? liveStats = null;
+            IReadOnlyList<OpponentMatchSummary> recentMatches = Array.Empty<OpponentMatchSummary>();
             try
             {
                 liveStats = await _pulseStatsService.GetPlayerStatsAsync(opponentTag, cancellationToken).ConfigureAwait(false);
@@ -46,6 +49,18 @@ namespace BarcodeRevealTool.Engine.Domain.Services
                 {
                     _logger.Information("Retrieved SC2Pulse stats for {OpponentTag}: MMR {MMR} {League}",
                         opponentTag, liveStats.CurrentMMR, liveStats.CurrentLeague);
+
+                    if (liveStats.CharacterId.HasValue)
+                    {
+                        recentMatches = await _pulseStatsService
+                            .GetRecentMatchesAsync(liveStats.CharacterId.Value, matchLimit, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(opponentToon) && !string.IsNullOrWhiteSpace(liveStats?.ToonHandle))
+                {
+                    opponentToon = liveStats.ToonHandle;
                 }
             }
             catch (Exception ex)
@@ -67,11 +82,13 @@ namespace BarcodeRevealTool.Engine.Domain.Services
 
             return new OpponentProfile(
                 opponentTag,
+                opponentToon,
                 stats.WinRate,
                 preferredRaces,
                 favoriteMaps,
                 pattern,
                 lastPlayed,
+                recentMatches,
                 liveStats);
         }
 

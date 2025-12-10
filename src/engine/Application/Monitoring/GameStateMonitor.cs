@@ -1,7 +1,3 @@
-using System;
-using System.Threading;
-using System.Threading.Tasks;
-
 namespace BarcodeRevealTool.Engine.Application.Monitoring
 {
     public class GameStateMonitor : Abstractions.IGameStateMonitor

@@ -9,9 +9,9 @@ using BarcodeRevealTool.Engine.Domain.Abstractions;
 using BarcodeRevealTool.Engine.Domain.Services;
 using BarcodeRevealTool.Engine.Game;
 using BarcodeRevealTool.Engine.Infrastructure.Data;
-using BarcodeRevealTool.Engine.Presentation;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace BarcodeRevealTool.Engine.Extensions
 {
@@ -30,8 +30,17 @@ namespace BarcodeRevealTool.Engine.Extensions
             services.AddSingleton<IGameLobbyFactory, GameLobbyFactory>();
             services.AddSingleton<ILobbyProcessor, LobbyProcessor>();
 
-            services.AddSingleton<IReplayRepository, ReplayDataAccess>();
-            services.AddSingleton<IReplayPersistence>(sp => (ReplayDataAccess)sp.GetRequiredService<IReplayRepository>());
+            services.TryAddSingleton<IReplayRepository, ReplayDataAccess>();
+            services.TryAddSingleton<IReplayPersistence>(sp =>
+            {
+                var repository = sp.GetRequiredService<IReplayRepository>();
+                if (repository is IReplayPersistence persistence)
+                {
+                    return persistence;
+                }
+
+                throw new InvalidOperationException("The registered IReplayRepository does not implement IReplayPersistence.");
+            });
 
             services.AddSingleton<IMatchHistoryService, MatchHistoryService>();
             services.AddSingleton<IBuildOrderService, BuildOrderService>();

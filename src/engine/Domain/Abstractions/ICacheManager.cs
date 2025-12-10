@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using BarcodeRevealTool.Engine.Domain.Models;
 
 namespace BarcodeRevealTool.Engine.Domain.Abstractions
@@ -11,8 +9,13 @@ namespace BarcodeRevealTool.Engine.Domain.Abstractions
     {
         Task InitializeAsync();
         Task SyncFromDiskAsync(string replayFolder, bool recursive);
+        Task SyncMissingReplaysAsync(string replayFolder, bool recursive);
+        Task SyncRecentReplayAsync(string replayFolder);
         CacheStatistics GetStatistics();
         bool IsCacheValid();
+        bool IsCacheEmpty();
+        bool WasFullSyncJustCompleted { get; }
+        void ResetFullSyncFlag();
         IReadOnlyList<string> GetMissingReplayFiles(string[] diskFiles);
     }
 }

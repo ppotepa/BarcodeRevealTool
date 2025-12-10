@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-
 namespace BarcodeRevealTool.Engine.Game
 {
     public class Team

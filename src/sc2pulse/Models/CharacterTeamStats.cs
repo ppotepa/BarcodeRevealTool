@@ -104,6 +104,15 @@ namespace Sc2Pulse.Models
         [JsonPropertyName("region")]
         public string? Region { get; set; }
 
+        [JsonPropertyName("realm")]
+        public int? Realm { get; set; }
+
+        [JsonPropertyName("accountId")]
+        public long? AccountId { get; set; }
+
+        [JsonPropertyName("battlenetId")]
+        public long? BattlenetId { get; set; }
+
         [JsonPropertyName("tag")]
         public string? Tag { get; set; }
     }

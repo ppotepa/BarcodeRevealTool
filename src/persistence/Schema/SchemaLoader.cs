@@ -1,7 +1,6 @@
-using System;
+using Serilog;
 using System.Data.SQLite;
 using System.Reflection;
-using Serilog;
 
 namespace BarcodeRevealTool.Persistence.Schema
 {

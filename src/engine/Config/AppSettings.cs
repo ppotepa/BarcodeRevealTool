@@ -15,5 +15,6 @@ namespace BarcodeRevealTool.Engine.Config
     {
         public string Folder { get; set; } = string.Empty;
         public bool Recursive { get; set; } = true;
+        public int MatchHistoryLimit { get; set; } = 5;
     }
 }

@@ -1,12 +1,8 @@
-using System;
-using System.Collections.Generic;
-using System.Data.SQLite;
-using System.Linq;
-using BarcodeRevealTool.Engine.Domain.Models;
 using BarcodeRevealTool.Persistence.Schema;
+using Serilog;
 using SqlKata;
 using SqlKata.Compilers;
-using Serilog;
+using System.Data.SQLite;
 
 namespace BarcodeRevealTool.Persistence.Replay
 {
@@ -270,12 +266,21 @@ namespace BarcodeRevealTool.Persistence.Replay
         {
             try
             {
+                if (allReplayFilesOnDisk.Length == 0)
+                {
+                    _logger.Debug("No replay files on disk to check");
+                    return new List<string>();
+                }
+
                 using var connection = CreateConnection();
 
-                var query = new Query("Replays")
-                    .Select("ReplayFilePath");
+                // Get all cached file paths that ARE in the disk file list using SQL IN clause
+                // This is more efficient than loading all cached files into memory
+                var cachedFilesQuery = new Query("Replays")
+                    .Select("ReplayFilePath")
+                    .WhereIn("ReplayFilePath", allReplayFilesOnDisk.ToList());
 
-                var compiled = _compiler.Compile(query);
+                var compiled = _compiler.Compile(cachedFilesQuery);
                 var cachedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                 using var command = connection.CreateCommand();
@@ -295,12 +300,13 @@ namespace BarcodeRevealTool.Persistence.Replay
                     }
                 }
 
+                // Missing files are those on disk that are NOT in the cache
                 var missingFiles = allReplayFilesOnDisk
                     .Where(f => !cachedFiles.Contains(f))
                     .ToList();
 
-                _logger.Debug("Found {MissingCount} missing replay files out of {TotalCount}",
-                    missingFiles.Count, allReplayFilesOnDisk.Length);
+                _logger.Debug("Checked {TotalCount} disk files. Found {MissingCount} missing from cache",
+                    allReplayFilesOnDisk.Length, missingFiles.Count);
 
                 return missingFiles;
             }
@@ -309,6 +315,73 @@ namespace BarcodeRevealTool.Persistence.Replay
                 _logger.Error(ex, "Failed to get missing replay files");
                 return allReplayFilesOnDisk.ToList();
             }
+        }
+
+        public bool IsReplayInCache(string replayFilePath)
+        {
+            try
+            {
+                using var connection = CreateConnection();
+                var query = new Query("Replays")
+                    .Where("ReplayFilePath", replayFilePath)
+                    .Select("Id");
+
+                var compiled = _compiler.Compile(query);
+
+                using var command = connection.CreateCommand();
+                command.CommandText = compiled.Sql;
+                foreach (var binding in compiled.Bindings)
+                {
+                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                }
+
+                var result = command.ExecuteScalar();
+                bool isInCache = result != null;
+
+                _logger.Debug("Replay {ReplayFile} is {Status}",
+                    Path.GetFileName(replayFilePath), isInCache ? "cached" : "new");
+
+                return isInCache;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to check if replay is cached: {ReplayFile}", replayFilePath);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Get the most recent replay date from the cache.
+        /// Used to check if new replays should be added based on file modification time.
+        /// </summary>
+        public DateTime? GetMostRecentReplayDate()
+        {
+            try
+            {
+                using var connection = CreateConnection();
+                var sql = "SELECT MAX(ReplayDate) FROM Replays";
+                using var command = connection.CreateCommand();
+                command.CommandText = sql;
+
+                var result = command.ExecuteScalar();
+                if (result != null && result != DBNull.Value)
+                {
+                    if (DateTime.TryParse(result.ToString(), out var date))
+                    {
+                        _logger.Debug("Most recent replay in cache is from {Date}", date);
+                        return date;
+                    }
+                }
+
+                _logger.Debug("No replays found in cache");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to get most recent replay date");
+                return null;
+            }
+
         }
 
         public int GetReplayCount()

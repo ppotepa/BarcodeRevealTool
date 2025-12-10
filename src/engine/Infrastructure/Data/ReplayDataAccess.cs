@@ -1,10 +1,6 @@
-using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using BarcodeRevealTool.Engine.Domain.Abstractions;
 using BarcodeRevealTool.Engine.Domain.Models;
+using System.Collections.Concurrent;
 
 namespace BarcodeRevealTool.Engine.Infrastructure.Data
 {
@@ -29,6 +25,34 @@ namespace BarcodeRevealTool.Engine.Infrastructure.Data
                 .OrderByDescending(m => m.GameDate)
                 .Take(limit)
                 .ToList();
+        }
+
+        public IReadOnlyList<MatchResult> GetRecentMatchesByToon(string opponentToon, int limit)
+        {
+            if (string.IsNullOrWhiteSpace(opponentToon))
+            {
+                return Array.Empty<MatchResult>();
+            }
+
+            return _matches.Values
+                .SelectMany(m => m)
+                .Where(m => string.Equals(m.OpponentToon, opponentToon, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(m => m.GameDate)
+                .Take(limit)
+                .ToList();
+        }
+
+        public string? GetLastKnownToon(string opponentTag)
+        {
+            if (!_matches.TryGetValue(opponentTag, out var list) || list.Count == 0)
+            {
+                return null;
+            }
+
+            return list
+                .OrderByDescending(m => m.GameDate)
+                .Select(m => m.OpponentToon)
+                .FirstOrDefault(toon => !string.IsNullOrWhiteSpace(toon));
         }
 
         public IReadOnlyList<BuildOrderStep> GetRecentBuildOrder(string opponentTag, int limit)
@@ -57,6 +81,34 @@ namespace BarcodeRevealTool.Engine.Infrastructure.Data
             lock (list)
             {
                 list.Add(match);
+            }
+
+            _lastSync = DateTime.UtcNow;
+            return Task.CompletedTask;
+        }
+
+        public Task SaveMatchNoteAsync(string opponentTag, DateTime gameDate, string note)
+        {
+            if (string.IsNullOrWhiteSpace(note))
+            {
+                return Task.CompletedTask;
+            }
+
+            if (!_matches.TryGetValue(opponentTag, out var list))
+            {
+                return Task.CompletedTask;
+            }
+
+            lock (list)
+            {
+                for (var i = 0; i < list.Count; i++)
+                {
+                    if (list[i].GameDate == gameDate)
+                    {
+                        list[i] = list[i] with { Note = note };
+                        break;
+                    }
+                }
             }
 
             _lastSync = DateTime.UtcNow;

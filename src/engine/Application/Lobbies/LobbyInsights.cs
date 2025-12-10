@@ -1,4 +1,3 @@
-using System.Linq;
 using BarcodeRevealTool.Engine.Game;
 using BarcodeRevealTool.Engine.Game.Lobbies;
 

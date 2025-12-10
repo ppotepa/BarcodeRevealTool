@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using BarcodeRevealTool.Engine.Domain.Models;
 
 namespace BarcodeRevealTool.Engine.Domain.Services

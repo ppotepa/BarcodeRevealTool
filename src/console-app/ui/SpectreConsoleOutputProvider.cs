@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using BarcodeRevealTool.Engine.Domain.Models;
 using BarcodeRevealTool.Engine.Game;
 using BarcodeRevealTool.Engine.Game.Lobbies;
@@ -13,7 +10,8 @@ namespace BarcodeRevealTool.UI.Console
         IGameStateRenderer,
         IMatchHistoryRenderer,
         IBuildOrderRenderer,
-        IErrorRenderer
+        IErrorRenderer,
+        IMatchNotePrompt
     {
         public void RenderAwaitingState()
         {
@@ -44,8 +42,9 @@ namespace BarcodeRevealTool.UI.Console
             table.AddColumn("Your Race");
             table.AddColumn("Opponent Race");
             table.AddColumn("Result");
+            table.AddColumn("Note");
 
-            foreach (var match in matches.Take(5))
+            foreach (var match in matches)
             {
                 var daysAgo = (int)(DateTime.UtcNow - match.GameDate).TotalDays;
                 var label = daysAgo == 0 ? "Today" : $"{daysAgo}d ago";
@@ -54,7 +53,8 @@ namespace BarcodeRevealTool.UI.Console
                     Escape(match.Map),
                     Escape(match.YourRace),
                     Escape(match.OpponentRace),
-                    match.YouWon ? "[green]WIN[/]" : "[red]LOSS[/]");
+                    match.YouWon ? "[green]WIN[/]" : "[red]LOSS[/]",
+                    Escape(match.Note ?? string.Empty));
             }
 
             AnsiConsole.Write(table);
@@ -67,7 +67,12 @@ namespace BarcodeRevealTool.UI.Console
 
             // Player Identity Section
             var nickname = profile.OpponentTag.Split('#').FirstOrDefault() ?? "Unknown";
-            content.Add($"[bold cyan]⚔ {Escape(nickname)}[/] [grey]{Escape(profile.OpponentTag)}[/]");
+            var identityLine = $"[bold cyan]⚔ {Escape(nickname)}[/] [grey]{Escape(profile.OpponentTag)}[/]";
+            if (!string.IsNullOrEmpty(profile.OpponentToon))
+            {
+                identityLine += $" [grey](Toon: {Escape(profile.OpponentToon)})[/]";
+            }
+            content.Add(identityLine);
             content.Add("");
 
             // SC2Pulse Live Stats Section
@@ -171,6 +176,21 @@ namespace BarcodeRevealTool.UI.Console
                 content.Add("");
             }
 
+            if (profile.RecentMatches.Count > 0)
+            {
+                content.Add("[bold yellow]Recent SC2Pulse Matches[/]");
+                foreach (var match in profile.RecentMatches)
+                {
+                    var result = match.OpponentWon ? "[green]WIN[/]" : "[red]LOSS[/]";
+                    var duration = match.Duration.HasValue ? $" ({match.Duration.Value:mm\\:ss})" : string.Empty;
+                    var opponentLabel = string.IsNullOrWhiteSpace(match.EnemyBattleTag)
+                        ? Escape(match.EnemyName)
+                        : Escape(match.EnemyBattleTag);
+                    content.Add($"  {match.PlayedAt:g} - {Escape(match.MapName)} vs {opponentLabel} [{Escape(match.EnemyRace)}] {result}{duration}");
+                }
+                content.Add("");
+            }
+
             // Build Order Pattern Section
             if (!string.IsNullOrEmpty(profile.CurrentBuildPattern.MostFrequentBuild))
             {
@@ -226,6 +246,13 @@ namespace BarcodeRevealTool.UI.Console
             AnsiConsole.MarkupLine($"[red]ERROR:[/] {Escape(message)}");
         }
 
+        public string? PromptForNote(string yourTag, string opponentTag, string mapName)
+        {
+            AnsiConsole.MarkupLine($"[yellow]Leave note for:[/] [cyan]{Escape(yourTag)}[/] vs [magenta]{Escape(opponentTag)}[/] on [grey]{Escape(mapName)}[/]");
+            AnsiConsole.Markup("[grey]Note (press Enter to skip): [/]");
+            return System.Console.ReadLine();
+        }
+
         private static void RenderTeam(string title, Team team, Team? otherTeam = null)
         {
             AnsiConsole.MarkupLine($"[bold]{Escape(title)}[/]");
@@ -240,8 +267,10 @@ namespace BarcodeRevealTool.UI.Console
                 // Use the actual nickname from the player object
                 var displayName = player.NickName ?? "Unknown";
                 var playerTag = player.Tag ?? "Unknown";
-                var otherTag = otherTeam?.Players.FirstOrDefault()?.Tag ?? "Unknown";
-                AnsiConsole.MarkupLine($"  [cyan]-[/] {Escape(displayName)} [grey](Nick: {Escape(displayName)}, BattleTag: {Escape(playerTag)})[/]");
+                var toonInfo = string.IsNullOrEmpty(player.Toon)
+                    ? string.Empty
+                    : $", Toon: {Escape(player.Toon)}";
+                AnsiConsole.MarkupLine($"  [cyan]-[/] {Escape(displayName)} [grey](Nick: {Escape(displayName)}, BattleTag: {Escape(playerTag)}{toonInfo})[/]");
             }
         }
 

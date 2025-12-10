@@ -1,5 +1,3 @@
-using System;
-
 namespace BarcodeRevealTool.Engine.Domain.Models
 {
     public record MatchStatistics(int GamesPlayed, WinRate WinRate, DateTime? LastGame)

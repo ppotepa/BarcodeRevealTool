@@ -1,12 +1,6 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using Serilog;
 using s2protocol.NET;
 using s2protocol.NET.Models;
+using Serilog;
 
 namespace BarcodeRevealTool.Persistence.Replay
 {

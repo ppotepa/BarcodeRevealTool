@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-
 namespace BarcodeRevealTool.Engine.Domain.Models
 {
     /// <summary>
@@ -9,11 +6,13 @@ namespace BarcodeRevealTool.Engine.Domain.Models
     /// </summary>
     public record OpponentProfile(
         string OpponentTag,
+        string? OpponentToon,
         WinRate VersusYou,
         PreferredRaces PreferredRaces,
         IReadOnlyList<string> FavoriteMaps,
         BuildOrderPattern CurrentBuildPattern,
         DateTime LastPlayed,
+        IReadOnlyList<OpponentMatchSummary> RecentMatches,
         SC2PulseStats? LiveStats = null);
 
     /// <summary>
@@ -27,7 +26,10 @@ namespace BarcodeRevealTool.Engine.Domain.Models
         int? TotalGamesPlayed,
         int? HighestMMR,
         string? HighestLeague,
-        WinRateByRace RaceStats);
+        WinRateByRace RaceStats,
+        long? CharacterId = null,
+        string? ToonHandle = null,
+        string? AccountBattleTag = null);
 
     /// <summary>
     /// Win rate breakdown by each race.

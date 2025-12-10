@@ -1,5 +1,3 @@
-using System.Threading;
-using System.Threading.Tasks;
 using BarcodeRevealTool.Engine.Domain.Models;
 
 namespace BarcodeRevealTool.Engine.Domain.Services
@@ -16,5 +14,10 @@ namespace BarcodeRevealTool.Engine.Domain.Services
         /// <param name="cancellationToken">Cancellation token</param>
         /// <returns>Player statistics or null if not found</returns>
         Task<SC2PulseStats?> GetPlayerStatsAsync(string battleTag, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Retrieves recent SC2Pulse matches for the specified character id.
+        /// </summary>
+        Task<IReadOnlyList<OpponentMatchSummary>> GetRecentMatchesAsync(long characterId, int limit, CancellationToken cancellationToken = default);
     }
 }

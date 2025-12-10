@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-
 namespace BarcodeRevealTool.Engine.Domain.Models
 {
     /// <summary>

@@ -1,6 +1,5 @@
-using System;
-using System.Data.SQLite;
 using Serilog;
+using System.Data.SQLite;
 
 namespace BarcodeRevealTool.Persistence.Cache
 {

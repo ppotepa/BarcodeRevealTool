@@ -1,6 +1,3 @@
-using System.Threading;
-using System.Threading.Tasks;
-
 namespace BarcodeRevealTool.Engine.Application.Abstractions
 {
     public interface IGameStateMonitor

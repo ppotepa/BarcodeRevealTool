@@ -22,6 +22,6 @@ namespace Sc2Pulse.Models
         [JsonPropertyName("members")]
         public LadderTeamMember? Members { get; set; }
 
-        public object BuildOrder { get; set; }
+        public object? BuildOrder { get; set; }
     }
 }

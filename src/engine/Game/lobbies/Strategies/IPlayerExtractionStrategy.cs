@@ -1,5 +1,4 @@
 using BarcodeRevealTool.Engine.Config;
-using BarcodeRevealTool.Engine.Game;
 
 namespace BarcodeRevealTool.Engine.Game.Lobbies.Strategies
 {

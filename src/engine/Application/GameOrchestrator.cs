@@ -1,11 +1,10 @@
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 using BarcodeRevealTool.Engine.Application.Abstractions;
 using BarcodeRevealTool.Engine.Application.Lobbies;
+using BarcodeRevealTool.Engine.Config;
+using BarcodeRevealTool.Engine.Domain.Abstractions;
 using BarcodeRevealTool.Engine.Domain.Services;
-using BarcodeRevealTool.Engine.Game.Lobbies;
 using BarcodeRevealTool.Engine.Presentation;
+using System.Linq;
 
 namespace BarcodeRevealTool.Engine.Application
 {
@@ -21,6 +20,10 @@ namespace BarcodeRevealTool.Engine.Application
         private readonly IMatchHistoryRenderer _historyRenderer;
         private readonly IBuildOrderRenderer _buildOrderRenderer;
         private readonly IErrorRenderer _errorRenderer;
+        private readonly IMatchNotePrompt _notePrompt;
+        private readonly IReplayPersistence _replayPersistence;
+        private readonly AppSettings _settings;
+        private MatchContext? _activeMatchContext;
 
         public GameOrchestrator(
             IGameStateMonitor stateMonitor,
@@ -32,7 +35,10 @@ namespace BarcodeRevealTool.Engine.Application
             IGameStateRenderer stateRenderer,
             IMatchHistoryRenderer historyRenderer,
             IBuildOrderRenderer buildOrderRenderer,
-            IErrorRenderer errorRenderer)
+            IErrorRenderer errorRenderer,
+            IMatchNotePrompt notePrompt,
+            IReplayPersistence replayPersistence,
+            AppSettings settings)
         {
             _stateMonitor = stateMonitor;
             _replaySyncService = replaySyncService;
@@ -44,6 +50,9 @@ namespace BarcodeRevealTool.Engine.Application
             _historyRenderer = historyRenderer;
             _buildOrderRenderer = buildOrderRenderer;
             _errorRenderer = errorRenderer;
+            _notePrompt = notePrompt ?? throw new ArgumentNullException(nameof(notePrompt));
+            _replayPersistence = replayPersistence ?? throw new ArgumentNullException(nameof(replayPersistence));
+            _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         }
 
         public async Task RunAsync(CancellationToken cancellationToken)
@@ -59,6 +68,14 @@ namespace BarcodeRevealTool.Engine.Application
                 }
                 else
                 {
+                    // Only sync when game finishes (InGame -> Awaiting)
+                    // This ensures we pick up replays of games that just completed
+                    if (args.Previous == ToolState.InGame && args.Current == ToolState.Awaiting)
+                    {
+                        await _replaySyncService.SyncAsync(cancellationToken);
+                        await PromptForMatchNoteAsync();
+                    }
+
                     _stateRenderer.RenderAwaitingState();
                 }
             };
@@ -68,7 +85,10 @@ namespace BarcodeRevealTool.Engine.Application
 
         private async Task HandleInGameAsync(CancellationToken cancellationToken)
         {
-            await _replaySyncService.SyncAsync(cancellationToken);
+            _activeMatchContext = null;
+
+            // Do NOT sync here - game hasn't finished yet
+            // Only sync after game is complete (InGame -> Awaiting)
             var lobby = await _lobbyProcessor.TryReadLobbyAsync(cancellationToken);
 
             if (lobby is null)
@@ -85,7 +105,17 @@ namespace BarcodeRevealTool.Engine.Application
                 return;
             }
 
-            var matches = _matchHistoryService.GetHistory(you.Tag, opponent.Tag, 5);
+            var opponentToon = _matchHistoryService.GetLastKnownOpponentToon(opponent.Tag);
+            if (!string.IsNullOrWhiteSpace(opponentToon))
+            {
+                opponent.Toon = opponentToon;
+            }
+
+            _activeMatchContext = new MatchContext(you.Tag, opponent.Tag, opponent.Toon);
+
+            var matchLimit = Math.Max(1, _settings.Replays?.MatchHistoryLimit ?? 5);
+
+            var matches = _matchHistoryService.GetHistory(you.Tag, opponent.Tag, matchLimit, opponentToon);
             var stats = _matchHistoryService.Analyze(matches);
             _historyRenderer.RenderMatchHistory(matches, stats);
 
@@ -95,7 +125,43 @@ namespace BarcodeRevealTool.Engine.Application
             _buildOrderRenderer.RenderBuildPattern(pattern);
 
             var profile = await _profileService.BuildProfileAsync(you.Tag, opponent.Tag, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(profile.OpponentToon))
+            {
+                opponent.Toon = profile.OpponentToon;
+                _activeMatchContext = _activeMatchContext?.WithToon(profile.OpponentToon);
+            }
             _historyRenderer.RenderOpponentProfile(profile);
+        }
+
+        private async Task PromptForMatchNoteAsync()
+        {
+            var context = _activeMatchContext;
+            _activeMatchContext = null;
+
+            if (context is null)
+            {
+                return;
+            }
+
+            var matches = _matchHistoryService.GetHistory(context.YouTag, context.OpponentTag, 1, context.OpponentToon);
+            var latestMatch = matches.FirstOrDefault();
+            if (latestMatch is null)
+            {
+                return;
+            }
+
+            var note = _notePrompt.PromptForNote(context.YouTag, context.OpponentTag, latestMatch.Map);
+            if (string.IsNullOrWhiteSpace(note))
+            {
+                return;
+            }
+
+            await _replayPersistence.SaveMatchNoteAsync(context.OpponentTag, latestMatch.GameDate, note.Trim()).ConfigureAwait(false);
+        }
+
+        private sealed record MatchContext(string YouTag, string OpponentTag, string? OpponentToon)
+        {
+            public MatchContext WithToon(string toon) => new MatchContext(YouTag, OpponentTag, toon);
         }
     }
 }

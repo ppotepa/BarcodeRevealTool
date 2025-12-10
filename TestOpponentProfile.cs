@@ -24,11 +24,13 @@ namespace BarcodeRevealTool.TestOpponentProfile
 
             var profile = new OpponentProfile(
                 OpponentTag: "Alfir#285",
+                OpponentToon: "2-S2-1-123456",
                 VersusYou: new WinRate(3, 7),
                 PreferredRaces: new PreferredRaces("Terran"),
                 FavoriteMaps: new[] { "Lightshade", "Blackpink", "Gilneas Station" },
                 CurrentBuildPattern: new BuildOrderPattern("Rax FE", DateTime.UtcNow.AddDays(-2)),
                 LastPlayed: DateTime.UtcNow.AddDays(-1),
+                RecentMatches: Array.Empty<OpponentMatchSummary>(),
                 LiveStats: sc2PulseStats
             );
 

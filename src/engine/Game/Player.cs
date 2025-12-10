@@ -5,5 +5,6 @@ namespace BarcodeRevealTool.Engine.Game
         public string NickName { get; set; } = string.Empty;
         public string Tag { get; set; } = string.Empty;
         public string Race { get; set; } = "Unknown";
+        public string? Toon { get; set; }
     }
 }

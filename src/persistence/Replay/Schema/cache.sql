@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS Matches (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     YourTag TEXT NOT NULL,
     OpponentTag TEXT NOT NULL,
+    OpponentToon TEXT,
     OpponentNickname TEXT,
     Map TEXT,
     YourRace TEXT,

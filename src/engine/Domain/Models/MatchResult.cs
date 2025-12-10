@@ -1,5 +1,3 @@
-using System;
-
 namespace BarcodeRevealTool.Engine.Domain.Models
 {
     /// <summary>
@@ -11,5 +9,7 @@ namespace BarcodeRevealTool.Engine.Domain.Models
         string Map,
         string YourRace,
         string OpponentRace,
-        bool YouWon);
+        bool YouWon,
+        string? OpponentToon = null,
+        string? Note = null);
 }

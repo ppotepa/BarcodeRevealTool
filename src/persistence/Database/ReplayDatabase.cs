@@ -1,15 +1,11 @@
-using System;
-using System.Collections.Generic;
-using System.Data.SQLite;
-using System.Linq;
-using System.Threading.Tasks;
 using BarcodeRevealTool.Engine.Domain.Abstractions;
 using BarcodeRevealTool.Engine.Domain.Models;
+using BarcodeRevealTool.Persistence.Schema;
+using Serilog;
 using SqlKata;
 using SqlKata.Compilers;
-using SqlKata.Execution;
-using Serilog;
-using BarcodeRevealTool.Persistence.Schema;
+using System.Data.SQLite;
+using ReplayCacheSchema = BarcodeRevealTool.Persistence.Replay.Schema.DatabaseSchema;
 
 namespace BarcodeRevealTool.Persistence.Database
 {
@@ -66,14 +62,42 @@ namespace BarcodeRevealTool.Persistence.Database
 
             try
             {
-                // Execute schema files for cache database - using same Players and ReplayFiles tables
                 SchemaLoader.ExecuteSchemas(connection, "Players.sql", "ReplayFiles.sql");
+                EnsureCacheSchema(connection);
                 _logger.Information("Cache database schema initialized successfully");
             }
             catch (Exception ex)
             {
                 _logger.Error(ex, "Failed to initialize cache database schema");
                 throw;
+            }
+        }
+
+        private static void EnsureCacheSchema(SQLiteConnection connection)
+        {
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = ReplayCacheSchema.CreateAllTables;
+                command.ExecuteNonQuery();
+            }
+
+            TryAddColumn(connection, "Matches", "Note", "TEXT");
+        }
+
+        private static void TryAddColumn(SQLiteConnection connection, string tableName, string columnName, string definition)
+        {
+            try
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {definition}";
+                command.ExecuteNonQuery();
+            }
+            catch (SQLiteException ex)
+            {
+                if (!ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw;
+                }
             }
         }
 
@@ -89,7 +113,7 @@ namespace BarcodeRevealTool.Persistence.Database
                     .Where("OpponentTag", opponentTag)
                     .OrderByDesc("GameDate")
                     .Limit(limit)
-                    .Select("Map", "YourRace", "OpponentRace", "Result", "GameDate", "OpponentNickname");
+                    .Select("Map", "YourRace", "OpponentRace", "Result", "GameDate", "OpponentNickname", "OpponentToon", "Note");
 
                 var compiled = _compiler.Compile(query);
 
@@ -109,7 +133,9 @@ namespace BarcodeRevealTool.Persistence.Database
                         Map: reader["Map"]?.ToString() ?? "Unknown",
                         YourRace: reader["YourRace"]?.ToString() ?? "Unknown",
                         OpponentRace: reader["OpponentRace"]?.ToString() ?? "Unknown",
-                        YouWon: reader["Result"]?.ToString()?.Equals("WIN", StringComparison.OrdinalIgnoreCase) ?? false
+                        YouWon: reader["Result"]?.ToString()?.Equals("WIN", StringComparison.OrdinalIgnoreCase) ?? false,
+                        OpponentToon: reader["OpponentToon"]?.ToString(),
+                        Note: reader["Note"]?.ToString()
                     ));
                 }
 
@@ -121,6 +147,95 @@ namespace BarcodeRevealTool.Persistence.Database
             }
 
             return matches;
+        }
+
+        public IReadOnlyList<MatchResult> GetRecentMatchesByToon(string opponentToon, int limit)
+        {
+            var matches = new List<MatchResult>();
+
+            if (string.IsNullOrWhiteSpace(opponentToon))
+            {
+                return matches;
+            }
+
+            try
+            {
+                using var connection = CreateConnection();
+
+                var query = new Query("Matches")
+                    .Where("OpponentToon", opponentToon)
+                    .OrderByDesc("GameDate")
+                    .Limit(limit)
+                    .Select("OpponentTag", "Map", "YourRace", "OpponentRace", "Result", "GameDate", "OpponentNickname", "OpponentToon", "Note");
+
+                var compiled = _compiler.Compile(query);
+
+                using var command = connection.CreateCommand();
+                command.CommandText = compiled.Sql;
+                foreach (var binding in compiled.Bindings)
+                {
+                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                }
+
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    matches.Add(new MatchResult(
+                        OpponentTag: reader["OpponentTag"]?.ToString() ?? "unknown#0000",
+                        GameDate: DateTime.Parse(reader["GameDate"]?.ToString() ?? DateTime.UtcNow.ToString("O")),
+                        Map: reader["Map"]?.ToString() ?? "Unknown",
+                        YourRace: reader["YourRace"]?.ToString() ?? "Unknown",
+                        OpponentRace: reader["OpponentRace"]?.ToString() ?? "Unknown",
+                        YouWon: reader["Result"]?.ToString()?.Equals("WIN", StringComparison.OrdinalIgnoreCase) ?? false,
+                        OpponentToon: reader["OpponentToon"]?.ToString(),
+                        Note: reader["Note"]?.ToString()
+                    ));
+                }
+
+                _logger.Debug("Retrieved {Count} recent matches for opponent toon {OpponentToon}", matches.Count, opponentToon);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to retrieve recent matches for opponent toon {OpponentToon}", opponentToon);
+            }
+
+            return matches;
+        }
+
+        public string? GetLastKnownToon(string opponentTag)
+        {
+            if (string.IsNullOrWhiteSpace(opponentTag))
+            {
+                return null;
+            }
+
+            try
+            {
+                using var connection = CreateConnection();
+
+                var query = new Query("Matches")
+                    .Where("OpponentTag", opponentTag)
+                    .WhereNotNull("OpponentToon")
+                    .OrderByDesc("GameDate")
+                    .Limit(1)
+                    .Select("OpponentToon");
+
+                var compiled = _compiler.Compile(query);
+                using var command = connection.CreateCommand();
+                command.CommandText = compiled.Sql;
+                foreach (var binding in compiled.Bindings)
+                {
+                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                }
+
+                var result = command.ExecuteScalar();
+                return result?.ToString();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to resolve last known toon for opponent {OpponentTag}", opponentTag);
+                return null;
+            }
         }
 
         public IReadOnlyList<BuildOrderStep> GetRecentBuildOrder(string opponentTag, int limit)
@@ -242,12 +357,14 @@ namespace BarcodeRevealTool.Persistence.Database
                 {
                     YourTag = match.OpponentTag,
                     OpponentTag = match.OpponentTag,
+                    OpponentToon = match.OpponentToon,
                     Map = match.Map,
                     YourRace = match.YourRace,
                     OpponentRace = match.OpponentRace,
                     Result = match.YouWon ? "WIN" : "LOSS",
                     GameDate = match.GameDate.ToString("O"),
                     ReplayFilePath = (string?)null,
+                    Note = match.Note,
                     CreatedAt = DateTime.UtcNow.ToString("O")
                 });
 
@@ -269,6 +386,42 @@ namespace BarcodeRevealTool.Persistence.Database
             catch (Exception ex)
             {
                 _logger.Error(ex, "Failed to save match for opponent {OpponentTag}", match.OpponentTag);
+                throw;
+            }
+        }
+
+        public async Task SaveMatchNoteAsync(string opponentTag, DateTime gameDate, string note)
+        {
+            if (string.IsNullOrWhiteSpace(note))
+            {
+                return;
+            }
+
+            try
+            {
+                using var connection = CreateConnection();
+                var query = new Query("Matches")
+                    .Where("OpponentTag", opponentTag)
+                    .Where("GameDate", gameDate.ToString("O"))
+                    .AsUpdate(new { Note = note });
+
+                var compiled = _compiler.Compile(query);
+
+                await Task.Run(() =>
+                {
+                    using var command = connection.CreateCommand();
+                    command.CommandText = compiled.Sql;
+                    foreach (var binding in compiled.Bindings)
+                    {
+                        command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    }
+                    var affected = command.ExecuteNonQuery();
+                    _logger.Debug("Saved note for opponent {OpponentTag} at {GameDate}. Rows affected: {Rows}", opponentTag, gameDate, affected);
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to save note for opponent {OpponentTag}", opponentTag);
                 throw;
             }
         }

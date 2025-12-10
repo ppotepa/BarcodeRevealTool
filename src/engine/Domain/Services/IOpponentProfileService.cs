@@ -1,5 +1,3 @@
-using System.Threading;
-using System.Threading.Tasks;
 using BarcodeRevealTool.Engine.Domain.Models;
 
 namespace BarcodeRevealTool.Engine.Domain.Services

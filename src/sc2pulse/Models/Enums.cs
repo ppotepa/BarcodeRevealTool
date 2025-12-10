@@ -80,4 +80,77 @@ namespace Sc2Pulse.Models
         REPLAY_STATS,
         BILIBILI
     }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum TeamArrangement
+    {
+        ARRANGED,
+        RANDOM
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum LadderTier
+    {
+        FIRST,
+        SECOND,
+        THIRD
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum TeamHistorySummaryMetric
+    {
+        GAMES,
+        RATING_MIN,
+        RATING_AVG,
+        RATING_MAX,
+        RATING_LAST,
+        REGION_RANK_LAST,
+        REGION_TEAM_COUNT_LAST
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum TeamHistoryStaticField
+    {
+        ID,
+        REGION,
+        QUEUE_TYPE,
+        TEAM_TYPE,
+        LEGACY_ID,
+        SEASON,
+        LEGACY_UID
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum TeamHistoryGroupBy
+    {
+        TEAM,
+        LEGACY_UID
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum TeamHistoryMetric
+    {
+        TIMESTAMP,
+        RATING,
+        GAMES,
+        WINS,
+        LEAGUE_TYPE,
+        TIER_TYPE,
+        DIVISION_ID,
+        GLOBAL_RANK,
+        REGION_RANK,
+        LEAGUE_RANK,
+        GLOBAL_TEAM_COUNT,
+        REGION_TEAM_COUNT,
+        LEAGUE_TEAM_COUNT,
+        ID,
+        SEASON
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum ClanEventType
+    {
+        LEAVE,
+        JOIN
+    }
 }

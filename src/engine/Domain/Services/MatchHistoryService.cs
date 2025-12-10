@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using BarcodeRevealTool.Engine.Domain.Abstractions;
 using BarcodeRevealTool.Engine.Domain.Models;
 
@@ -15,7 +12,7 @@ namespace BarcodeRevealTool.Engine.Domain.Services
             _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         }
 
-        public IReadOnlyList<MatchResult> GetHistory(string yourTag, string opponentTag, int limit)
+        public IReadOnlyList<MatchResult> GetHistory(string yourTag, string opponentTag, int limit, string? opponentToon = null)
         {
             if (string.IsNullOrWhiteSpace(yourTag))
             {
@@ -27,7 +24,26 @@ namespace BarcodeRevealTool.Engine.Domain.Services
                 throw new ArgumentException("Opponent tag must be provided.", nameof(opponentTag));
             }
 
+            if (!string.IsNullOrWhiteSpace(opponentToon))
+            {
+                var matchesByToon = _repository.GetRecentMatchesByToon(opponentToon, limit);
+                if (matchesByToon.Count > 0)
+                {
+                    return matchesByToon;
+                }
+            }
+
             return _repository.GetRecentMatches(yourTag, opponentTag, limit);
+        }
+
+        public string? GetLastKnownOpponentToon(string opponentTag)
+        {
+            if (string.IsNullOrWhiteSpace(opponentTag))
+            {
+                return null;
+            }
+
+            return _repository.GetLastKnownToon(opponentTag);
         }
 
         public MatchStatistics Analyze(IReadOnlyList<MatchResult> matches)

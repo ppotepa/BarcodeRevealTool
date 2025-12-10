@@ -1,9 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using BarcodeRevealTool.Engine.Config;
-using BarcodeRevealTool.Engine.Presentation;
 using Microsoft.Extensions.Configuration;
 using Serilog;
 
@@ -69,6 +64,7 @@ namespace BarcodeRevealTool.Persistence.Replay
 
         /// <summary>
         /// Synchronize missing replays from disk (incremental update).
+        /// Only adds replays newer than the most recent replay in the cache.
         /// </summary>
         public async Task SyncMissingReplaysAsync()
         {
@@ -92,13 +88,93 @@ namespace BarcodeRevealTool.Persistence.Replay
                 "*.SC2Replay",
                 searchOption);
 
-            var missingFiles = _queryService.GetMissingReplayFiles(allReplayFiles);
-            _logger.Information("Found {MissingCount} missing replay files", missingFiles.Count);
+            // Get the most recent replay date from the cache
+            // Only add replays newer than this date
+            var mostRecentCachedDate = _queryService.GetMostRecentReplayDate();
 
-            if (missingFiles.Count > 0)
+            List<string> newReplayFiles;
+            if (mostRecentCachedDate.HasValue)
             {
-                await ProcessReplaysAsync(missingFiles.ToArray());
+                // Filter to only replays newer than the most recent cached replay
+                newReplayFiles = allReplayFiles
+                    .Where(f =>
+                    {
+                        var fileInfo = new FileInfo(f);
+                        // Add if file is newer than cached date
+                        return fileInfo.LastWriteTimeUtc > mostRecentCachedDate.Value;
+                    })
+                    .ToList();
+                _logger.Information("Found {NewCount} replays newer than {MostRecentDate}",
+                    newReplayFiles.Count, mostRecentCachedDate.Value);
             }
+            else
+            {
+                // No cached replays, add all files on disk
+                newReplayFiles = allReplayFiles.ToList();
+                _logger.Information("No cached replays found. Will add {TotalCount} files", allReplayFiles.Length);
+            }
+
+            if (newReplayFiles.Count > 0)
+            {
+                await ProcessReplaysAsync(newReplayFiles.ToArray());
+            }
+        }
+
+        /// <summary>
+        /// Synchronize only the most recently modified replay file.
+        /// Used when a game has just finished to add only that replay.
+        /// </summary>
+        public async Task SyncRecentReplayAsync()
+        {
+            var appSettings = new AppSettings();
+            _configuration.GetSection("barcodeReveal").Bind(appSettings);
+
+            if (appSettings?.Replays?.Folder == null || !Directory.Exists(appSettings.Replays.Folder))
+            {
+                _logger.Warning("Replay folder not configured or doesn't exist");
+                return;
+            }
+
+            _logger.Information("Syncing most recent replay from: {ReplayFolder}", appSettings.Replays.Folder);
+
+            var searchOption = (appSettings.Replays.Recursive == true)
+                ? SearchOption.AllDirectories
+                : SearchOption.TopDirectoryOnly;
+
+            var allReplayFiles = Directory.GetFiles(
+                appSettings.Replays.Folder,
+                "*.SC2Replay",
+                searchOption);
+
+            if (allReplayFiles.Length == 0)
+            {
+                _logger.Information("No replay files found");
+                return;
+            }
+
+            // Get the most recently modified replay file
+            var mostRecentReplay = allReplayFiles
+                .Select(f => new FileInfo(f))
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .FirstOrDefault();
+
+            if (mostRecentReplay == null)
+            {
+                _logger.Warning("Could not determine most recent replay file");
+                return;
+            }
+
+            // Check if this replay is already in the cache
+            if (_queryService.IsReplayInCache(mostRecentReplay.FullName))
+            {
+                _logger.Information("Most recent replay already cached: {ReplayFile}", mostRecentReplay.Name);
+                return;
+            }
+
+            _logger.Information("Found new replay to add: {ReplayFile} (modified {LastWriteTime})",
+                mostRecentReplay.Name, mostRecentReplay.LastWriteTimeUtc);
+
+            await ProcessReplaysAsync(new[] { mostRecentReplay.FullName });
         }
 
         private async Task ProcessReplaysAsync(string[] replayFiles)

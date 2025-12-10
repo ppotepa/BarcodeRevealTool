@@ -1,8 +1,4 @@
-using System;
-using System.Diagnostics;
-using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
+using BarcodeRevealTool.ConsoleApp.Debugging;
 using BarcodeRevealTool.Engine.Application;
 using BarcodeRevealTool.Engine.Config;
 using BarcodeRevealTool.Engine.Extensions;
@@ -29,7 +25,6 @@ namespace BarcodeRevealTool.ConsoleApp
             ServiceProvider? provider = null;
             IErrorRenderer? errorRenderer = null;
             int runNumber = 0;
-            string? userMenuChoice = null;
 
             try
             {
@@ -65,7 +60,7 @@ namespace BarcodeRevealTool.ConsoleApp
 
 #if DEBUG
                 // Show startup menu after logging is configured so choices get logged
-                userMenuChoice = ShowStartupMenu();
+                ShowStartupMenu();
 #endif
 
                 var services = new ServiceCollection();
@@ -77,6 +72,7 @@ namespace BarcodeRevealTool.ConsoleApp
                 services.AddSingleton<IMatchHistoryRenderer>(sp => sp.GetRequiredService<SpectreConsoleOutputProvider>());
                 services.AddSingleton<IBuildOrderRenderer>(sp => sp.GetRequiredService<SpectreConsoleOutputProvider>());
                 services.AddSingleton<IErrorRenderer>(sp => sp.GetRequiredService<SpectreConsoleOutputProvider>());
+                services.AddSingleton<IMatchNotePrompt>(sp => sp.GetRequiredService<SpectreConsoleOutputProvider>());
                 services.AddSingleton(tempRunInfoService ?? new RunInfoService(connectionString, Log.Logger));
 
                 provider = services.BuildServiceProvider();
@@ -185,67 +181,49 @@ namespace BarcodeRevealTool.ConsoleApp
 
         private static async Task InitializeCacheAsync(BarcodeRevealTool.Persistence.Cache.CacheManager cacheManager, IConfiguration config)
         {
-            string lockFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.lock");
-            bool lockFileExists = File.Exists(lockFilePath);
             var appSettings = new AppSettings();
             config.GetSection("barcodeReveal").Bind(appSettings);
 
-#if DEBUG
-            // In DEBUG mode, we showed the startup menu
-            // Option 1: Normal start - use cache (lock file exists from menu handling)
-            // Option 2: Start Fresh - cache was deleted in menu, no lock file
+            string lockFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache.lock");
+            bool lockFileExists = await Task.Run(() => File.Exists(lockFilePath));
 
             try
             {
                 await cacheManager.InitializeAsync();
 
-                // If no lock file exists (fresh start), scan and cache replays
-                if (!lockFileExists && !string.IsNullOrEmpty(appSettings.Replays?.Folder))
+                // If cache.lock exists, the cache was previously initialized and is valid
+                // Trust the cached data and don't re-extract
+                if (lockFileExists)
                 {
-                    Log.Information("Fresh start detected in DEBUG mode. Caching replays from configured folder...");
-                    await cacheManager.SyncFromDiskAsync(appSettings.Replays.Folder, appSettings.Replays.Recursive);
+                    var stats = cacheManager.GetStatistics();
+                    Log.Information("Cache lock file exists. Using existing cache with {Matches} matches", stats.TotalMatches);
+                    return;
                 }
 
-                Log.Information("Cache initialized in DEBUG mode");
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Failed to initialize cache in DEBUG mode");
-                throw;
-            }
-#else
-            // In RELEASE mode, no startup menu - check lock file
-            try
-            {
-                await cacheManager.InitializeAsync();
-                
-                if (!lockFileExists)
+                // No lock file means first run - check if database is empty
+                bool cacheIsEmpty = await Task.Run(() => cacheManager.IsCacheEmpty());
+
+                if (cacheIsEmpty && !string.IsNullOrEmpty(appSettings.Replays?.Folder))
                 {
-                    // No lock file means first run or cache was cleared - sync replays from appconfig
-                    Log.Information("No cache lock file found. Syncing replays from configuration...");
-                    
-                    if (!string.IsNullOrEmpty(appSettings.Replays?.Folder))
-                    {
-                        await cacheManager.SyncFromDiskAsync(appSettings.Replays.Folder, appSettings.Replays.Recursive);
-                        Log.Information("Replay synchronization completed");
-                    }
-                    else
-                    {
-                        Log.Warning("No replay folder configured in appSettings");
-                    }
+                    Log.Information("No cache lock file found and database is empty. Performing full replay extraction from disk...");
+                    await cacheManager.SyncFromDiskAsync(appSettings.Replays.Folder, appSettings.Replays.Recursive == true);
+                    Log.Information("Full cache synchronization completed");
+                }
+                else if (!cacheIsEmpty)
+                {
+                    var stats = cacheManager.GetStatistics();
+                    Log.Information("Cache already populated with {Matches} matches", stats.TotalMatches);
                 }
                 else
                 {
-                    // Lock file exists - use existing cache
-                    Log.Information("Cache initialized in RELEASE mode with existing data");
+                    Log.Warning("No replay folder configured in appSettings");
                 }
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to initialize cache in RELEASE mode");
+                Log.Error(ex, "Failed to initialize cache");
                 throw;
             }
-#endif
         }
 
         private static string ShowStartupMenu()
@@ -257,12 +235,13 @@ namespace BarcodeRevealTool.ConsoleApp
             Console.WriteLine();
             Console.WriteLine("  1. Start (normal operation with cached data)");
             Console.WriteLine("  2. Start Fresh (delete cache and restart)");
+            Console.WriteLine("  3. SC2Pulse API Debugger (tools only)");
             Console.WriteLine();
 
             string choice = string.Empty;
             while (true)
             {
-                Console.Write("Select option (1 or 2): ");
+                Console.Write("Select option (1-3): ");
                 choice = Console.ReadLine() ?? string.Empty;
 
                 if (choice == "1")
@@ -282,6 +261,17 @@ namespace BarcodeRevealTool.ConsoleApp
                     Log.Information("User selected: Start Fresh (option 2) - Clearing cache");
                     DeleteCacheFiles();
                     break;
+                }
+
+                if (choice == "3")
+                {
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    Console.WriteLine("Launching SC2Pulse API debugger...");
+                    Console.ResetColor();
+                    Log.Information("User selected: SC2Pulse Debugger (option 3)");
+                    Sc2PulseDebugMenu.RunAsync().GetAwaiter().GetResult();
+                    Console.WriteLine();
+                    continue;
                 }
 
                 Console.ForegroundColor = ConsoleColor.Red;

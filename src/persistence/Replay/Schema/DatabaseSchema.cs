@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS Matches (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     YourTag TEXT NOT NULL,
     OpponentTag TEXT NOT NULL,
+    OpponentToon TEXT,
     OpponentNickname TEXT,
     Map TEXT,
     YourRace TEXT,
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS Matches (
     Result TEXT,
     GameDate TEXT NOT NULL,
     ReplayFilePath TEXT,
+    Note TEXT,
     CreatedAt TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_matches_opponent ON Matches(OpponentTag);
@@ -52,7 +54,7 @@ CREATE TABLE IF NOT EXISTS CacheMetadata (
         public static class Queries
         {
             public const string GetRecentMatches = @"
-SELECT Id, YourTag, OpponentTag, OpponentNickname, Map, YourRace, OpponentRace, Result, GameDate, ReplayFilePath
+SELECT Id, YourTag, OpponentTag, OpponentToon, OpponentNickname, Map, YourRace, OpponentRace, Result, GameDate, ReplayFilePath, Note
 FROM Matches
 WHERE OpponentTag = @opponentTag
 ORDER BY GameDate DESC
@@ -68,8 +70,8 @@ LIMIT @limit
 ";
 
             public const string InsertMatch = @"
-INSERT INTO Matches (YourTag, OpponentTag, OpponentNickname, Map, YourRace, OpponentRace, Result, GameDate, ReplayFilePath, CreatedAt)
-VALUES (@yourTag, @opponentTag, @opponentNickname, @map, @yourRace, @opponentRace, @result, @gameDate, @replayFilePath, @createdAt)
+INSERT INTO Matches (YourTag, OpponentTag, OpponentNickname, Map, YourRace, OpponentRace, Result, GameDate, ReplayFilePath, Note, CreatedAt)
+VALUES (@yourTag, @opponentTag, @opponentNickname, @map, @yourRace, @opponentRace, @result, @gameDate, @replayFilePath, @note, @createdAt)
 ";
 
             public const string DeleteBuildOrdersByOpponent = @"

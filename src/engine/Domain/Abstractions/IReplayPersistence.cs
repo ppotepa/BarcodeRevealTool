@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using BarcodeRevealTool.Engine.Domain.Models;
 
 namespace BarcodeRevealTool.Engine.Domain.Abstractions
@@ -8,5 +6,6 @@ namespace BarcodeRevealTool.Engine.Domain.Abstractions
     {
         Task SaveMatchAsync(MatchResult match);
         Task SaveBuildOrderAsync(string opponentTag, IReadOnlyList<BuildOrderStep> buildOrder);
+        Task SaveMatchNoteAsync(string opponentTag, DateTime gameDate, string note);
     }
 }

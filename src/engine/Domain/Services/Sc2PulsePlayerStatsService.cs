@@ -1,9 +1,7 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using BarcodeRevealTool.Engine.Domain.Models;
+using System.Collections.Generic;
+using System;
+using System.Linq;
 using Sc2Pulse;
 using Sc2Pulse.Models;
 using Sc2Pulse.Queries;
@@ -20,11 +18,27 @@ namespace BarcodeRevealTool.Engine.Domain.Services
         private readonly Sc2PulseClient _client;
         private readonly SeasonManager _seasonManager;
         private readonly ILogger _logger = Log.ForContext<Sc2PulsePlayerStatsService>();
+        private static readonly Dictionary<string, int> RegionCodeLookup = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["US"] = 1,
+            ["NA"] = 1,
+            ["EU"] = 2,
+            ["KR"] = 3,
+            ["CN"] = 5,
+            ["SEA"] = 6,
+            ["GLOBAL"] = 1
+        };
 
         public Sc2PulsePlayerStatsService()
         {
             _client = new Sc2PulseClient();
             _seasonManager = new SeasonManager();
+
+            // Enable detailed request logging for debugging API issues
+            _client.SetDebugLogger(message =>
+            {
+                _logger.Debug("SC2Pulse API: {Message}", message);
+            });
         }
 
         /// <summary>
@@ -103,10 +117,36 @@ namespace BarcodeRevealTool.Engine.Domain.Services
 
                 var characterId = character.Members.Character.Id;
                 var characterName = character.Members.Character.Name;
+                var toonHandle = BuildToonHandle(character.Members.Character);
+                var accountBattleTag = character.Members.Account?.BattleTag;
                 _logger.Information("Found character {CharacterName} (ID: {CharacterId}) for {BattleTag}", characterName, characterId, battleTag);
 
                 // Fetch seasonal character-teams data (current season only, 1v1 queue)
-                var teamsData = await _client.GetCharacterTeamsSeasonAsync(characterId, currentSeason.Id, cancellationToken).ConfigureAwait(false);
+                List<CharacterTeamStats>? teamsData = null;
+                try
+                {
+                    _logger.Debug("Attempting to fetch seasonal character-teams data: characterId={CharacterId}, season={SeasonId}, queueType=201",
+                        characterId, currentSeason.Id);
+                    teamsData = await _client
+                        .GetCharacterTeamsSeasonAsync(characterId, currentSeason.Id, 201, cancellationToken)
+                        .ConfigureAwait(false);
+                    _logger.Debug("Successfully fetched seasonal character-teams data with {TeamCount} entries", teamsData?.Count ?? 0);
+                }
+                catch (HttpRequestException httpEx)
+                {
+                    _logger.Warning(httpEx,
+                        "Seasonal SC2Pulse API call failed for character {CharacterId} ({CharacterName}) in season {SeasonId}. " +
+                        "Error: {ErrorMessage}. Using legacy stats/full endpoint as fallback.",
+                        characterId, characterName, currentSeason.Id, httpEx.Message);
+                    return await GetPlayerStatsLegacyAsync(battleTag, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex,
+                        "Unexpected error fetching seasonal character-teams data for character {CharacterId} ({CharacterName}) in season {SeasonId}. Using legacy stats.",
+                        characterId, characterName, currentSeason.Id);
+                    return await GetPlayerStatsLegacyAsync(battleTag, cancellationToken).ConfigureAwait(false);
+                }
                 if (teamsData == null || teamsData.Count == 0)
                 {
                     _logger.Warning("No teams data available for character {CharacterId} ({CharacterName}) in season {SeasonId}. Falling back to stats endpoint.",
@@ -146,7 +186,10 @@ namespace BarcodeRevealTool.Engine.Domain.Services
                     TotalGamesPlayed: totalGames,
                     HighestMMR: overall1v1.Rating ?? currentRating,
                     HighestLeague: league,  // In seasonal data, current = highest
-                    RaceStats: raceStats);
+                    RaceStats: raceStats,
+                    CharacterId: characterId,
+                    ToonHandle: toonHandle,
+                    AccountBattleTag: accountBattleTag);
 
                 _logger.Information("Successfully built SC2PulseStats for {BattleTag}: {LeagueName} {MMR} MMR, {TotalGames} games",
                     battleTag, result.CurrentLeague, result.CurrentMMR, result.TotalGamesPlayed);
@@ -187,6 +230,8 @@ namespace BarcodeRevealTool.Engine.Domain.Services
 
                 var characterId = character.Members.Character.Id;
                 var characterName = character.Members.Character.Name;
+                var toonHandle = BuildToonHandle(character.Members.Character);
+                var accountBattleTag = character.Members.Account?.BattleTag;
 
                 var statsArray = await _client.GetCharacterFullStatsAsync(characterId, cancellationToken).ConfigureAwait(false);
                 if (statsArray == null || statsArray.Count == 0)
@@ -206,17 +251,23 @@ namespace BarcodeRevealTool.Engine.Domain.Services
                     return null;
                 }
 
-                var overallStats = overall1v1Stats.Stats;
+                var overallStats = overall1v1Stats.Stats!;
                 var currentStats = overall1v1Stats.CurrentStats;
 
-                var currentRating = currentStats?.Rating;
-                var currentLeague = currentStats?.League;
-                var league = ConvertLeagueType(currentLeague);
-                var mmr = currentRating ?? 0;
-                var totalGames = overallStats.GamesPlayed ?? 0;
+                var rawLeague = currentStats?.League ?? overallStats.League;
+                var league = ConvertLeagueType(rawLeague);
+
+                var mmr = currentStats?.Rating
+                          ?? overallStats.Rating
+                          ?? overallStats.RatingMax
+                          ?? 0;
+
+                var totalGames = currentStats?.GamesPlayed
+                                 ?? overallStats.GamesPlayed
+                                 ?? 0;
 
                 _logger.Information("Retrieved SC2Pulse stats (legacy) for {BattleTag}: Current League={CurrentLeagueRaw} ({LeagueName}) MMR={MMR}",
-                    battleTag, currentLeague, league, mmr);
+                    battleTag, rawLeague, league, mmr);
 
                 var raceStats = ExtractRaceStatsLegacy(statsArray);
 
@@ -226,8 +277,11 @@ namespace BarcodeRevealTool.Engine.Domain.Services
                     CurrentMMR: mmr,
                     TotalGamesPlayed: totalGames,
                     HighestMMR: overallStats.RatingMax ?? mmr,
-                    HighestLeague: ConvertLeagueType(overallStats.LeagueMax),
-                    RaceStats: raceStats);
+                    HighestLeague: ConvertLeagueType(overallStats.LeagueMax ?? rawLeague),
+                    RaceStats: raceStats,
+                    CharacterId: characterId,
+                    ToonHandle: toonHandle,
+                    AccountBattleTag: accountBattleTag);
 
                 return result;
             }
@@ -236,6 +290,128 @@ namespace BarcodeRevealTool.Engine.Domain.Services
                 _logger.Error(ex, "Failed to fetch SC2Pulse stats using legacy endpoint for {BattleTag}", battleTag);
                 return null;
             }
+        }
+
+        public async Task<IReadOnlyList<OpponentMatchSummary>> GetRecentMatchesAsync(long characterId, int limit, CancellationToken cancellationToken = default)
+        {
+            if (characterId <= 0 || limit <= 0)
+            {
+                return Array.Empty<OpponentMatchSummary>();
+            }
+
+            try
+            {
+                var query = new CharacterMatchesQuery
+                {
+                    CharacterId = new List<long> { characterId },
+                    Type = new List<MatchKind> { MatchKind._1V1 },
+                    Limit = limit
+                };
+
+                var response = await _client.GetCharacterMatchesAsync(query, cancellationToken).ConfigureAwait(false);
+                if (response?.Result == null || response.Result.Count == 0)
+                {
+                    return Array.Empty<OpponentMatchSummary>();
+                }
+
+                var summaries = new List<OpponentMatchSummary>();
+                foreach (var ladderMatch in response.Result)
+                {
+                    var summary = ConvertToOpponentMatchSummary(characterId, ladderMatch);
+                    if (summary != null)
+                    {
+                        summaries.Add(summary);
+                    }
+                }
+
+                return summaries;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to fetch SC2Pulse match history for character {CharacterId}", characterId);
+                return Array.Empty<OpponentMatchSummary>();
+            }
+        }
+
+        private OpponentMatchSummary? ConvertToOpponentMatchSummary(long characterId, LadderMatch ladderMatch)
+        {
+            if (ladderMatch?.Match == null)
+            {
+                return null;
+            }
+
+            var participants = ladderMatch.Participants ?? new List<LadderMatchParticipant>();
+            var targetSide = participants.FirstOrDefault(p => p.Participant?.PlayerCharacterId == characterId);
+            if (targetSide?.Participant == null)
+            {
+                return null;
+            }
+
+            var enemySide = participants.FirstOrDefault(p => p.Participant?.PlayerCharacterId != characterId && p.Participant?.PlayerCharacterId != null);
+            if (enemySide?.Participant == null)
+            {
+                return null;
+            }
+
+            var enemyMember = enemySide.Team?.Members?.FirstOrDefault();
+            var enemyName = enemyMember?.Character?.Name
+                            ?? enemyMember?.Account?.BattleTag
+                            ?? $"Character {enemySide.Participant.PlayerCharacterId}";
+            var enemyRace = enemyMember?.GetPrimaryRace() ?? "Unknown";
+            var enemyBattleTag = enemyMember?.Account?.BattleTag;
+            var enemyToon = enemyMember?.Character != null ? BuildToonHandle(enemyMember.Character) : null;
+
+            var playedAt = ladderMatch.Match.Date ?? ladderMatch.Match.Updated ?? DateTime.UtcNow;
+            var duration = ladderMatch.Match.Duration.HasValue
+                ? TimeSpan.FromSeconds(Math.Max(0, ladderMatch.Match.Duration.Value))
+                : (TimeSpan?)null;
+
+            var opponentWon = string.Equals(targetSide.Participant.Decision, "WIN", StringComparison.OrdinalIgnoreCase);
+
+            return new OpponentMatchSummary(
+                PlayedAt: playedAt,
+                MapName: ladderMatch.Map?.Name ?? "Unknown",
+                EnemyName: enemyName,
+                EnemyRace: enemyRace,
+                OpponentWon: opponentWon,
+                Duration: duration,
+                EnemyBattleTag: enemyBattleTag,
+                EnemyToon: enemyToon);
+        }
+
+        private string? BuildToonHandle(PlayerCharacter? character)
+        {
+            if (character == null)
+            {
+                return null;
+            }
+
+            return BuildToonHandle(character.Region.ToString(), character.Realm, character.BattleNetId);
+        }
+
+        private string? BuildToonHandle(PlayerCharacterInfo? characterInfo)
+        {
+            if (characterInfo == null)
+            {
+                return null;
+            }
+
+            return BuildToonHandle(characterInfo.Region, characterInfo.Realm, characterInfo.BattlenetId);
+        }
+
+        private string? BuildToonHandle(string? region, int? realm, long? battleNetId)
+        {
+            if (string.IsNullOrWhiteSpace(region) || realm is null || battleNetId is null)
+            {
+                return null;
+            }
+
+            if (!RegionCodeLookup.TryGetValue(region.ToUpperInvariant(), out var regionCode))
+            {
+                return null;
+            }
+
+            return $"{regionCode}-S2-{realm}-{battleNetId}";
         }
 
         /// <summary>

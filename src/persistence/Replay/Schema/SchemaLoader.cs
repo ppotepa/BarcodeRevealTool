@@ -1,7 +1,6 @@
-using System;
+using Serilog;
 using System.Data.SQLite;
 using System.Reflection;
-using Serilog;
 
 namespace BarcodeRevealTool.Persistence.Replay.Schema
 {
@@ -49,7 +48,7 @@ namespace BarcodeRevealTool.Persistence.Replay.Schema
                     }
                     catch (Exception ex)
                     {
-                        _logger.Warning(ex, "Schema statement failed (may be normal if table exists): {Statement}", 
+                        _logger.Warning(ex, "Schema statement failed (may be normal if table exists): {Statement}",
                             stmt.Substring(0, Math.Min(100, stmt.Length)));
                     }
                 }
