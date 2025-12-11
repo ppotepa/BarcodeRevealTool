@@ -26,7 +26,7 @@ namespace Sc2Pulse.Models
         public int? AvgRating { get; set; }
 
         [JsonPropertyName("avgLeagueType")]
-        public string? AvgLeagueType { get; set; }
+        public int? AvgLeagueType { get; set; }
 
         [JsonPropertyName("games")]
         public int? Games { get; set; }

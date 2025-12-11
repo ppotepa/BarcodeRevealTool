@@ -15,8 +15,12 @@ CREATE TABLE IF NOT EXISTS Replays (
     OpponentPlayerId TEXT,
     BuildOrderCached INTEGER DEFAULT 0,
     CachedAt TEXT,
+    RunNumber INTEGER,                      -- Which run recorded this replay
+    LobbyFileId INTEGER,                    -- FK to LobbyFiles (linked after lobby stored)
     CreatedAt TEXT NOT NULL,
-    UpdatedAt TEXT NOT NULL
+    UpdatedAt TEXT NOT NULL,
+    FOREIGN KEY (RunNumber) REFERENCES RunInfo(RunNumber),
+    FOREIGN KEY (LobbyFileId) REFERENCES LobbyFiles(Id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_replays_opponent ON Replays(OpponentPlayer);

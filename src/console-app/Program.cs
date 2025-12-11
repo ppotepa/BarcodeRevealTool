@@ -6,6 +6,7 @@ using BarcodeRevealTool.Engine.Presentation;
 using BarcodeRevealTool.Persistence.Cache;
 using BarcodeRevealTool.Persistence.Extensions;
 using BarcodeRevealTool.Persistence.Replay;
+using BarcodeRevealTool.Persistence.Schema.Migrations;
 using BarcodeRevealTool.UI.Console;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -36,11 +37,26 @@ namespace BarcodeRevealTool.ConsoleApp
                 var dbPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "_db", "cache.db");
                 var connectionString = $"Data Source={dbPath};";
 
+                // Run migrations before any database operations
+                try
+                {
+                    Directory.CreateDirectory(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "_db"));
+                    var migrationRunner = new MigrationRunner(connectionString);
+                    var migrationResult = await migrationRunner.RunAllMigrationsAsync();
+                    if (!migrationResult.Success)
+                    {
+                        Log.Warning("Some migrations failed: {@MigrationDetails}", migrationResult);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Migration setup encountered an issue, continuing anyway");
+                }
+
                 // Get run number before Serilog is configured
                 RunInfoService? tempRunInfoService = null;
                 try
                 {
-                    Directory.CreateDirectory(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "_db"));
                     tempRunInfoService = new RunInfoService(connectionString, Log.Logger);
 
 #if DEBUG
@@ -78,6 +94,14 @@ namespace BarcodeRevealTool.ConsoleApp
 
                 provider = services.BuildServiceProvider();
 
+                // Initialize config history snapshot on startup
+                var configInitService = provider.GetRequiredService<ConfigInitializationService>();
+                configInitService.InitializeConfigHistoryOnStartup(runNumber);
+
+                // Initialize data tracking for this run
+                var dataTrackingService = provider.GetRequiredService<DataTrackingIntegrationService>();
+                dataTrackingService.InitializeDebugSession(runNumber);
+
                 // Update AppSettings in the provider with debug settings if set
                 var appSettings = provider.GetRequiredService<AppSettings>();
                 if (debugSettings.ManualBattleTag != null || debugSettings.ManualNickname != null || debugSettings.LobbyFiles?.Count > 0)
@@ -106,6 +130,10 @@ namespace BarcodeRevealTool.ConsoleApp
                 // Mark run as completed successfully
                 var runInfoSvc = provider.GetRequiredService<RunInfoService>();
                 runInfoSvc.CompleteRun(runNumber, 0);
+
+                // Mark data tracking session as completed
+                var dataTrackingSvc = provider.GetRequiredService<DataTrackingIntegrationService>();
+                await dataTrackingSvc.CompleteDebugSessionAsync(runNumber, 0);
             }
             catch (Exception ex)
             {
@@ -120,6 +148,13 @@ namespace BarcodeRevealTool.ConsoleApp
                         var connectionString = $"Data Source={Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "_db", "cache.db")};";
                         var runInfoService = new RunInfoService(connectionString, Log.Logger);
                         runInfoService.FailRun(runNumber, ex.Message);
+
+                        // Also mark data tracking session as failed
+                        if (provider != null)
+                        {
+                            var dataTrackingSvc = provider.GetRequiredService<DataTrackingIntegrationService>();
+                            await dataTrackingSvc.CompleteDebugSessionAsync(runNumber, 1);
+                        }
                     }
                     catch { }
                 }

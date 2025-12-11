@@ -65,7 +65,7 @@ namespace BarcodeRevealTool.UI.Console
         {
             var content = new List<string>();
 
-            // Player Identity Section
+            // Player Identity Section - FROM LOBBY FILE
             var nickname = profile.OpponentTag.Split('#').FirstOrDefault() ?? "Unknown";
             var identityLine = $"[bold cyan]⚔ {Escape(nickname)}[/] [grey]{Escape(profile.OpponentTag)}[/]";
             if (!string.IsNullOrEmpty(profile.OpponentToon))
@@ -75,9 +75,47 @@ namespace BarcodeRevealTool.UI.Console
             content.Add(identityLine);
             content.Add("");
 
-            // SC2Pulse Live Stats Section
+            // Head-to-Head Record Section (from local replay cache)
+            content.Add("[bold yellow]Head-to-Head Record[/]");
+            content.Add($"  Versus You: [bold green]{profile.VersusYou.Wins}W[/] - [bold red]{profile.VersusYou.Losses}L[/] ({profile.VersusYou.Display})");
+            content.Add("");
+
+            // Opponent Preferences Section (from local replay cache)
+            content.Add("[bold yellow]Preferred Playstyle[/]");
+            content.Add($"  Main Race: {Escape(profile.PreferredRaces.Primary)}");
+            if (!string.IsNullOrEmpty(profile.PreferredRaces.Secondary))
+            {
+                content.Add($"  Secondary: {Escape(profile.PreferredRaces.Secondary)}");
+            }
+            if (!string.IsNullOrEmpty(profile.PreferredRaces.Tertiary))
+            {
+                content.Add($"  Tertiary: {Escape(profile.PreferredRaces.Tertiary)}");
+            }
+            content.Add("");
+
+            // Recent Activity Section (from local replay cache)
+            if (profile.LastPlayed != DateTime.MinValue)
+            {
+                var daysAgo = (int)(DateTime.UtcNow - profile.LastPlayed).TotalDays;
+                var timeDisplay = daysAgo == 0 ? "Today" : daysAgo == 1 ? "Yesterday" : $"{daysAgo}d ago";
+                content.Add("[bold yellow]Recent Activity[/]");
+                content.Add($"  Last Played: [yellow]{timeDisplay}[/]");
+                content.Add("");
+            }
+
+            // Build Order Pattern Section (from local replay cache)
+            if (!string.IsNullOrEmpty(profile.CurrentBuildPattern.MostFrequentBuild))
+            {
+                content.Add("[bold yellow]Favorite Opening[/]");
+                content.Add($"  Build: [cyan]{Escape(profile.CurrentBuildPattern.MostFrequentBuild)}[/]");
+                content.Add($"  Last Observed: {profile.CurrentBuildPattern.LastAnalyzed:g}");
+                content.Add("");
+            }
+
+            // SC2Pulse Live Stats Section - CLEARLY LABELED AS EXTERNAL DATA
             if (profile.LiveStats != null)
             {
+                content.Add("[bold magenta]━━━━━ SC2PULSE LIVE DATA ━━━━━[/]");
                 content.Add("[bold yellow]Current Ladder Status[/]");
                 var leagueColor = profile.LiveStats.CurrentLeague switch
                 {
@@ -112,73 +150,25 @@ namespace BarcodeRevealTool.UI.Console
                     content.Add($"  Peak: {profile.LiveStats.HighestLeague} {profile.LiveStats.HighestMMR} MMR");
                 }
                 content.Add("");
-            }
 
-            // Head-to-Head Record Section
-            content.Add("[bold yellow]Head-to-Head Record[/]");
-            content.Add($"  Versus You: [bold green]{profile.VersusYou.Wins}W[/] - [bold red]{profile.VersusYou.Losses}L[/] ({profile.VersusYou.Display})");
-            content.Add("");
+                // Show race stats if available from SC2Pulse
+                if (profile.LiveStats.RaceStats != null)
+                {
+                    var raceStats = profile.LiveStats.RaceStats;
 
-            // Opponent Preferences Section
-            content.Add("[bold yellow]Preferred Playstyle[/]");
+                    content.Add("[bold yellow]Race Statistics[/]");
+                    var terranDisplay = $"Terran: {raceStats.Terran.Wins}W-{raceStats.Terran.Losses}L";
+                    var protossDisplay = $"Protoss: {raceStats.Protoss.Wins}W-{raceStats.Protoss.Losses}L";
+                    var zergDisplay = $"Zerg: {raceStats.Zerg.Wins}W-{raceStats.Zerg.Losses}L";
 
-            // Show race stats if available from SC2Pulse
-            if (profile.LiveStats?.RaceStats != null)
-            {
-                var raceStats = profile.LiveStats.RaceStats;
-
-                // Main race with win/loss
-                var mainRace = profile.PreferredRaces.Primary;
-                content.Add($"  Main Race: [bold cyan]{Escape(mainRace)}[/]");
-
-                // Show win rates for each race
-                var terranDisplay = $"Terran: {raceStats.Terran.Wins}W-{raceStats.Terran.Losses}L";
-                var protossDisplay = $"Protoss: {raceStats.Protoss.Wins}W-{raceStats.Protoss.Losses}L";
-                var zergDisplay = $"Zerg: {raceStats.Zerg.Wins}W-{raceStats.Zerg.Losses}L";
-
-                content.Add($"    ({terranDisplay} | {protossDisplay} | {zergDisplay})");
-            }
-            else
-            {
-                content.Add($"  Main Race: {Escape(profile.PreferredRaces.Primary)}");
-            }
-
-            if (!string.IsNullOrEmpty(profile.PreferredRaces.Secondary))
-            {
-                content.Add($"  Secondary: {Escape(profile.PreferredRaces.Secondary)}");
-            }
-            if (!string.IsNullOrEmpty(profile.PreferredRaces.Tertiary))
-            {
-                content.Add($"  Tertiary: {Escape(profile.PreferredRaces.Tertiary)}");
-            }
-            content.Add("");
-
-            // Opponent Preferences Section
-            content.Add("[bold yellow]Preferred Playstyle[/]");
-            content.Add($"  Main Race: {Escape(profile.PreferredRaces.Primary)}");
-            if (!string.IsNullOrEmpty(profile.PreferredRaces.Secondary))
-            {
-                content.Add($"  Secondary: {Escape(profile.PreferredRaces.Secondary)}");
-            }
-            if (!string.IsNullOrEmpty(profile.PreferredRaces.Tertiary))
-            {
-                content.Add($"  Tertiary: {Escape(profile.PreferredRaces.Tertiary)}");
-            }
-            content.Add("");
-
-            // Recent Activity Section
-            if (profile.LastPlayed != DateTime.MinValue)
-            {
-                var daysAgo = (int)(DateTime.UtcNow - profile.LastPlayed).TotalDays;
-                var timeDisplay = daysAgo == 0 ? "Today" : daysAgo == 1 ? "Yesterday" : $"{daysAgo}d ago";
-                content.Add("[bold yellow]Recent Activity[/]");
-                content.Add($"  Last Played: [yellow]{timeDisplay}[/]");
-                content.Add("");
+                    content.Add($"  {terranDisplay} | {protossDisplay} | {zergDisplay}");
+                    content.Add("");
+                }
             }
 
             if (profile.RecentMatches.Count > 0)
             {
-                content.Add("[bold yellow]Recent SC2Pulse Matches[/]");
+                content.Add("[bold magenta]━━━━━ SC2PULSE RECENT MATCHES ━━━━━[/]");
                 foreach (var match in profile.RecentMatches)
                 {
                     var result = match.OpponentWon ? "[green]WIN[/]" : "[red]LOSS[/]";
@@ -189,14 +179,6 @@ namespace BarcodeRevealTool.UI.Console
                     content.Add($"  {match.PlayedAt:g} - {Escape(match.MapName)} vs {opponentLabel} [{Escape(match.EnemyRace)}] {result}{duration}");
                 }
                 content.Add("");
-            }
-
-            // Build Order Pattern Section
-            if (!string.IsNullOrEmpty(profile.CurrentBuildPattern.MostFrequentBuild))
-            {
-                content.Add("[bold yellow]Favorite Opening[/]");
-                content.Add($"  Build: [cyan]{Escape(profile.CurrentBuildPattern.MostFrequentBuild)}[/]");
-                content.Add($"  Last Observed: {profile.CurrentBuildPattern.LastAnalyzed:g}");
             }
 
             var panel = new Panel(string.Join(Environment.NewLine, content));

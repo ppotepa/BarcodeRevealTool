@@ -1,6 +1,7 @@
 using Serilog;
 using System.Data.SQLite;
 using System.Reflection;
+using Spectre.Console;
 
 namespace BarcodeRevealTool.Persistence.Schema.Migrations
 {
@@ -44,7 +45,7 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
                     CREATE INDEX IF NOT EXISTS idx_migration_name ON __MigrationHistory(MigrationName);
                     CREATE INDEX IF NOT EXISTS idx_migration_version ON __MigrationHistory(Version);
                 ";
-                
+
                 command.ExecuteNonQuery();
                 _logger.Debug("Migration tracking table initialized");
             }
@@ -68,7 +69,7 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
 
                 if (!migrations.Any())
                 {
-                    _logger.Information("No migrations found");
+                    _logger.Warning("No migrations found. This may indicate an issue with embedded resources. Continuing anyway.");
                     result.Success = true;
                     result.TotalMigrations = 0;
                     return result;
@@ -77,18 +78,32 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
                 using var connection = new SQLiteConnection(_connectionString);
                 connection.Open();
 
-                foreach (var migration in migrations)
-                {
-                    var executed = IsMigrationExecuted(connection, migration.Name);
-                    if (executed)
-                    {
-                        _logger.Debug("Migration already executed: {MigrationName}", migration.Name);
-                        result.SkippedMigrations++;
-                        continue;
-                    }
+                result.TotalMigrations = migrations.Count;
+                _logger.Information("Starting migration execution. Found {MigrationCount} migrations", migrations.Count);
 
-                    await ExecuteMigrationAsync(connection, migration, result);
-                }
+                // Display progress bar using Spectre.Console
+                await AnsiConsole.Progress()
+                    .StartAsync(async ctx =>
+                    {
+                        var task = ctx.AddTask("[bold cyan]Running Migrations[/]", maxValue: migrations.Count);
+
+                        foreach (var migration in migrations)
+                        {
+                            var executed = IsMigrationExecuted(connection, migration.Name);
+                            if (executed)
+                            {
+                                _logger.Debug("Migration already executed: {MigrationName}", migration.Name);
+                                result.SkippedMigrations++;
+                                task.Increment(1);
+                                continue;
+                            }
+
+                            task.Description = $"[bold cyan]{migration.Name}[/]";
+                            _logger.Information("Executing migration: {MigrationName} (v{Version})", migration.Name, migration.Version);
+                            await ExecuteMigrationAsync(connection, migration, result);
+                            task.Increment(1);
+                        }
+                    });
 
                 result.Success = true;
                 _logger.Information("All migrations completed successfully. Executed: {Executed}, Skipped: {Skipped}",
@@ -115,7 +130,7 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
             {
                 using var command = connection.CreateCommand();
                 command.CommandText = migration.Sql;
-                
+
                 await Task.Run(() => command.ExecuteNonQuery());
 
                 var executionTime = (DateTime.UtcNow - startTime).TotalMilliseconds;
@@ -137,7 +152,7 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
 
                 result.FailedMigrations++;
                 result.ErrorMessage = ex.Message;
-                
+
                 throw;
             }
         }
@@ -152,17 +167,33 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
             try
             {
                 var assembly = Assembly.GetExecutingAssembly();
-                var resourceNames = assembly.GetManifestResourceNames()
+                var allResourceNames = assembly.GetManifestResourceNames();
+
+                _logger.Debug("Available resources ({Count}): {Resources}",
+                    allResourceNames.Length,
+                    string.Join(", ", allResourceNames.Where(n => n.Contains("Schema")).Take(10)));
+
+                var resourceNames = allResourceNames
                     .Where(name => name.Contains("Schema.Migrations.V") && name.EndsWith(".sql"))
                     .OrderBy(name => name)
                     .ToList();
+
+                _logger.Information("Found {MigrationCount} migration SQL files", resourceNames.Count);
+                if (resourceNames.Count > 0)
+                {
+                    _logger.Debug("Migration files: {Files}", string.Join(", ", resourceNames));
+                }
 
                 foreach (var resourceName in resourceNames)
                 {
                     try
                     {
                         using var stream = assembly.GetManifestResourceStream(resourceName);
-                        if (stream == null) continue;
+                        if (stream == null)
+                        {
+                            _logger.Warning("Stream is null for resource: {ResourceName}", resourceName);
+                            continue;
+                        }
 
                         using var reader = new StreamReader(stream);
                         var sql = reader.ReadToEnd();
@@ -178,6 +209,8 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
                             Sql = sql,
                             ResourceName = resourceName
                         });
+
+                        _logger.Debug("Loaded migration: {Name} (v{Version})", versionAndName, version);
                     }
                     catch (Exception ex)
                     {
@@ -185,7 +218,7 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
                     }
                 }
 
-                _logger.Debug("Found {MigrationCount} migrations", migrations.Count);
+                _logger.Information("Successfully loaded {MigrationCount} migrations", migrations.Count);
             }
             catch (Exception ex)
             {
@@ -220,7 +253,7 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
         /// <summary>
         /// Record a migration execution in the history table.
         /// </summary>
-        private void RecordMigration(SQLiteConnection connection, string migrationName, string version, 
+        private void RecordMigration(SQLiteConnection connection, string migrationName, string version,
             long executionTimeMs, string status, string? errorMessage)
         {
             try

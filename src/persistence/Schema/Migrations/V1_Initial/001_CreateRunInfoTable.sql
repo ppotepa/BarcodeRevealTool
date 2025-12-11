@@ -1,13 +1,17 @@
+-- Migration 001: Create RunInfo Table
+-- Date: 2025-12-11
+-- Description: Initial creation of RunInfo table for tracking application runs
+
 CREATE TABLE IF NOT EXISTS RunInfo (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     RunNumber INTEGER NOT NULL UNIQUE,
     DateStarted DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     DateCompleted DATETIME,
     TotalReplaysProcessed INTEGER DEFAULT 0,
-    Status TEXT NOT NULL DEFAULT 'InProgress', -- InProgress, Completed, Failed
-    Mode TEXT NOT NULL, -- Debug, Release
-    LogFileName TEXT,                       -- Log file name: [date][runno].[debug/release].log
-    LogFilePath TEXT,                       -- Full path to log file in logs folder
+    Status TEXT NOT NULL DEFAULT 'InProgress',
+    Mode TEXT NOT NULL,
+    LogFileName TEXT,
+    LogFilePath TEXT,
     Notes TEXT
 );
 
