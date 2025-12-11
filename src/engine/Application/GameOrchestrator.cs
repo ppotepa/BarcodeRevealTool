@@ -20,7 +20,6 @@ namespace BarcodeRevealTool.Engine.Application
         private readonly IMatchHistoryRenderer _historyRenderer;
         private readonly IBuildOrderRenderer _buildOrderRenderer;
         private readonly IErrorRenderer _errorRenderer;
-        private readonly IMatchNotePrompt _notePrompt;
         private readonly IReplayPersistence _replayPersistence;
         private readonly AppSettings _settings;
         private MatchContext? _activeMatchContext;
@@ -36,7 +35,6 @@ namespace BarcodeRevealTool.Engine.Application
             IMatchHistoryRenderer historyRenderer,
             IBuildOrderRenderer buildOrderRenderer,
             IErrorRenderer errorRenderer,
-            IMatchNotePrompt notePrompt,
             IReplayPersistence replayPersistence,
             AppSettings settings)
         {
@@ -50,7 +48,6 @@ namespace BarcodeRevealTool.Engine.Application
             _historyRenderer = historyRenderer;
             _buildOrderRenderer = buildOrderRenderer;
             _errorRenderer = errorRenderer;
-            _notePrompt = notePrompt ?? throw new ArgumentNullException(nameof(notePrompt));
             _replayPersistence = replayPersistence ?? throw new ArgumentNullException(nameof(replayPersistence));
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         }
@@ -73,7 +70,6 @@ namespace BarcodeRevealTool.Engine.Application
                     if (args.Previous == ToolState.InGame && args.Current == ToolState.Awaiting)
                     {
                         await _replaySyncService.SyncAsync(cancellationToken);
-                        await PromptForMatchNoteAsync();
                     }
 
                     _stateRenderer.RenderAwaitingState();
@@ -131,32 +127,6 @@ namespace BarcodeRevealTool.Engine.Application
                 _activeMatchContext = _activeMatchContext?.WithToon(profile.OpponentToon);
             }
             _historyRenderer.RenderOpponentProfile(profile);
-        }
-
-        private async Task PromptForMatchNoteAsync()
-        {
-            var context = _activeMatchContext;
-            _activeMatchContext = null;
-
-            if (context is null)
-            {
-                return;
-            }
-
-            var matches = _matchHistoryService.GetHistory(context.YouTag, context.OpponentTag, 1, context.OpponentToon);
-            var latestMatch = matches.FirstOrDefault();
-            if (latestMatch is null)
-            {
-                return;
-            }
-
-            var note = _notePrompt.PromptForNote(context.YouTag, context.OpponentTag, latestMatch.Map);
-            if (string.IsNullOrWhiteSpace(note))
-            {
-                return;
-            }
-
-            await _replayPersistence.SaveMatchNoteAsync(context.OpponentTag, latestMatch.GameDate, note.Trim()).ConfigureAwait(false);
         }
 
         private sealed record MatchContext(string YouTag, string OpponentTag, string? OpponentToon)

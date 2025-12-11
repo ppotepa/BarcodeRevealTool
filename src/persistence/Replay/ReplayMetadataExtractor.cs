@@ -1,3 +1,4 @@
+using System;
 using s2protocol.NET;
 using s2protocol.NET.Models;
 using Serilog;
@@ -218,9 +219,32 @@ namespace BarcodeRevealTool.Persistence.Replay
                 return null;
             }
 
-            var program = string.IsNullOrWhiteSpace(toon.ProgramId) ? "S2" : toon.ProgramId.ToUpperInvariant();
+            var programRaw = CleanToonSegment(toon.ProgramId);
+            var program = string.IsNullOrWhiteSpace(programRaw) ? "S2" : programRaw.ToUpperInvariant();
             var realm = toon.Realm > 0 ? toon.Realm : 1;
-            return $"{toon.Region}-{program}-{realm}-{toon.Id}";
+            var rawHandle = $"{toon.Region}-{program}-{realm}-{toon.Id}";
+            var sanitized = CleanToonSegment(rawHandle);
+            return string.IsNullOrWhiteSpace(sanitized) ? null : sanitized;
+        }
+
+        private static string CleanToonSegment(string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            Span<char> buffer = stackalloc char[value.Length];
+            int idx = 0;
+            foreach (var ch in value)
+            {
+                if (!char.IsControl(ch))
+                {
+                    buffer[idx++] = ch;
+                }
+            }
+
+            return new string(buffer[..idx]).Trim();
         }
 
         private static DateTime ResolveGameDate(Details? details, DateTime fallbackDateUtc)

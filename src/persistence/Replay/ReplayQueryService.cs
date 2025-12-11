@@ -1,3 +1,4 @@
+using System;
 using BarcodeRevealTool.Persistence.Schema;
 using Serilog;
 using SqlKata;
@@ -78,10 +79,17 @@ namespace BarcodeRevealTool.Persistence.Replay
 
                 // Check if replay already exists by ReplayFileLocation (the UNIQUE constraint column)
                 // This is more reliable than Guid since it's the physical file path
-                var checkSql = "SELECT Id FROM ReplayFiles WHERE ReplayFileLocation = @location";
+                var checkQuery = new Query("ReplayFiles")
+                    .Where("ReplayFileLocation", metadata.ReplayFilePath)
+                    .Select("Id");
+                var checkCompiled = _compiler.Compile(checkQuery);
+
                 using var checkCommand = connection.CreateCommand();
-                checkCommand.CommandText = checkSql;
-                checkCommand.Parameters.AddWithValue("@location", metadata.ReplayFilePath);
+                checkCommand.CommandText = checkCompiled.Sql;
+                foreach (var binding in checkCompiled.Bindings)
+                {
+                    checkCommand.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                }
 
                 var existingId = checkCommand.ExecuteScalar();
                 if (existingId != null)
@@ -90,31 +98,37 @@ namespace BarcodeRevealTool.Persistence.Replay
                     return Convert.ToInt64(existingId);
                 }
 
-                // Ensure we have players - create or get player IDs
+                // Get player IDs (referenced via toon handle)
                 long p1Id = InsertOrGetPlayer(connection, metadata.YourPlayer, metadata.YourPlayerId);
                 long p2Id = InsertOrGetPlayer(connection, metadata.OpponentPlayer, metadata.OpponentPlayerId);
+                var normalizedP1Toon = NormalizeToonForStorage(metadata.YourPlayerId);
+                var normalizedP2Toon = NormalizeToonForStorage(metadata.OpponentPlayerId);
 
-                // Insert new replay file using raw SQL
+                // Insert new replay file using SqlKata
                 var now = DateTime.UtcNow.ToString("O");
-                var insertSql = @"INSERT INTO ReplayFiles 
-                    (Guid, Map, P1Id, P2Id, Winner, P1Toon, P2Toon, DeterministicGuid, DatePlayedAt, ReplayFileLocation, CreatedAt, UpdatedAt)
-                    VALUES (@guid, @map, @p1Id, @p2Id, @winner, @p1Toon, @p2Toon, @detGuid, @datePlayedAt, @location, @createdAt, @updatedAt)";
+                var insertQuery = new Query("ReplayFiles").AsInsert(new Dictionary<string, object>
+                {
+                    ["Guid"] = metadata.ReplayGuid,
+                    ["Map"] = metadata.Map ?? "Unknown",
+                    ["P1Id"] = p1Id,
+                    ["P2Id"] = p2Id,
+                    ["Winner"] = DBNull.Value,
+                    ["P1Toon"] = normalizedP1Toon,
+                    ["P2Toon"] = normalizedP2Toon,
+                    ["DeterministicGuid"] = metadata.ReplayGuid,
+                    ["DatePlayedAt"] = metadata.GameDate.ToString("O"),
+                    ["ReplayFileLocation"] = metadata.ReplayFilePath,
+                    ["CreatedAt"] = now,
+                    ["UpdatedAt"] = now
+                });
 
+                var insertCompiled = _compiler.Compile(insertQuery);
                 using var insertCommand = connection.CreateCommand();
-                insertCommand.CommandText = insertSql;
-                insertCommand.Parameters.AddWithValue("@guid", metadata.ReplayGuid);
-                insertCommand.Parameters.AddWithValue("@map", metadata.Map ?? "Unknown");
-                insertCommand.Parameters.AddWithValue("@p1Id", p1Id);
-                insertCommand.Parameters.AddWithValue("@p2Id", p2Id);
-                insertCommand.Parameters.AddWithValue("@winner", DBNull.Value);
-                insertCommand.Parameters.AddWithValue("@p1Toon", metadata.YourPlayerId ?? string.Empty);
-                insertCommand.Parameters.AddWithValue("@p2Toon", metadata.OpponentPlayerId ?? string.Empty);
-                insertCommand.Parameters.AddWithValue("@detGuid", metadata.ReplayGuid);
-                insertCommand.Parameters.AddWithValue("@datePlayedAt", metadata.GameDate.ToString("O"));
-                insertCommand.Parameters.AddWithValue("@location", metadata.ReplayFilePath);
-                insertCommand.Parameters.AddWithValue("@createdAt", now);
-                insertCommand.Parameters.AddWithValue("@updatedAt", now);
-
+                insertCommand.CommandText = insertCompiled.Sql;
+                foreach (var binding in insertCompiled.Bindings)
+                {
+                    insertCommand.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                }
                 insertCommand.ExecuteNonQuery();
 
                 // Get the inserted ID
@@ -147,29 +161,46 @@ namespace BarcodeRevealTool.Persistence.Replay
                         nickname = "Unknown";
 
                     var battleTag = ExtractBattleTag(nickname);
-                    var toon = toonId ?? $"toon-{Guid.NewGuid():N}".Substring(0, 20);
+                    var normalizedToonId = NormalizeToonForStorage(toonId);
+                    var toon = string.IsNullOrEmpty(normalizedToonId)
+                        ? $"toon-{Guid.NewGuid():N}".Substring(0, 20)
+                        : normalizedToonId;
 
                     // Priority 1: Try to get by exact toon ID if provided (most specific match)
-                    if (!string.IsNullOrEmpty(toonId))
+                    if (!string.IsNullOrEmpty(normalizedToonId))
                     {
-                        var checkSql = "SELECT Id FROM Players WHERE Toon = @toon";
+                        var checkQuery = new Query("Players")
+                            .Where("Toon", normalizedToonId)
+                            .Select("Id");
+                        var checkCompiled = _compiler.Compile(checkQuery);
+
                         using var checkCommand = connection.CreateCommand();
-                        checkCommand.CommandText = checkSql;
-                        checkCommand.Parameters.AddWithValue("@toon", toonId);
+                        checkCommand.CommandText = checkCompiled.Sql;
+                        foreach (var binding in checkCompiled.Bindings)
+                        {
+                            checkCommand.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                        }
 
                         var existingId = checkCommand.ExecuteScalar();
                         if (existingId != null)
                         {
-                            _logger.Debug("Player already exists by toon: {Toon}", toonId);
+                            _logger.Debug("Player already exists by toon: {Toon}", normalizedToonId);
                             return Convert.ToInt64(existingId);
                         }
                     }
 
                     // Priority 2: Try to get by BattleTag (good middle ground for identity)
-                    var battleTagCheckSql = "SELECT Id FROM Players WHERE BattleTag = @battleTag";
+                    var battleTagQuery = new Query("Players")
+                        .Where("BattleTag", battleTag)
+                        .Select("Id");
+                    var battleTagCompiled = _compiler.Compile(battleTagQuery);
+
                     using var battleTagCheckCommand = connection.CreateCommand();
-                    battleTagCheckCommand.CommandText = battleTagCheckSql;
-                    battleTagCheckCommand.Parameters.AddWithValue("@battleTag", battleTag);
+                    battleTagCheckCommand.CommandText = battleTagCompiled.Sql;
+                    foreach (var binding in battleTagCompiled.Bindings)
+                    {
+                        battleTagCheckCommand.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    }
 
                     var battleTagId = battleTagCheckCommand.ExecuteScalar();
                     if (battleTagId != null)
@@ -180,17 +211,22 @@ namespace BarcodeRevealTool.Persistence.Replay
 
                     // Priority 3: Try LIKE pattern match on toon suffix if a full toon ID is provided
                     // This handles cases where toon format changes slightly but suffix is stable
-                    if (!string.IsNullOrEmpty(toonId) && toonId.Contains('-') && toonId.Length > 2)
+                    if (!string.IsNullOrEmpty(normalizedToonId))
                     {
-                        // Extract suffix from toon (e.g., "S2-1-11057632" from "2-S2-1-11057632")
-                        var suffixStart = toonId.IndexOf('-') + 1;
-                        if (suffixStart < toonId.Length)
+                        var toonSuffix = GetToonSuffix(normalizedToonId);
+                        if (!string.IsNullOrEmpty(toonSuffix) && !string.Equals(toonSuffix, normalizedToonId, StringComparison.Ordinal))
                         {
-                            var toonSuffix = toonId.Substring(suffixStart);
-                            var suffixCheckSql = "SELECT Id FROM Players WHERE Toon LIKE '%' || @suffix";
+                            var suffixQuery = new Query("Players")
+                                .WhereLike("Toon", $"%{toonSuffix}")
+                                .Select("Id");
+                            var suffixCompiled = _compiler.Compile(suffixQuery);
+
                             using var suffixCheckCommand = connection.CreateCommand();
-                            suffixCheckCommand.CommandText = suffixCheckSql;
-                            suffixCheckCommand.Parameters.AddWithValue("@suffix", toonSuffix);
+                            suffixCheckCommand.CommandText = suffixCompiled.Sql;
+                            foreach (var binding in suffixCompiled.Bindings)
+                            {
+                                suffixCheckCommand.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                            }
 
                             var suffixId = suffixCheckCommand.ExecuteScalar();
                             if (suffixId != null)
@@ -201,19 +237,25 @@ namespace BarcodeRevealTool.Persistence.Replay
                         }
                     }
 
-                    // Insert new player using raw SQL
+                    // Insert new player using SqlKata
                     var now = DateTime.UtcNow.ToString("O");
 
-                    var insertSql = @"INSERT INTO Players (Nickname, BattleTag, Toon, CreatedAt, UpdatedAt)
-                        VALUES (@nickname, @battleTag, @toon, @createdAt, @updatedAt)";
+                    var insertQuery = new Query("Players").AsInsert(new Dictionary<string, object>
+                    {
+                        ["Nickname"] = nickname,
+                        ["BattleTag"] = battleTag,
+                        ["Toon"] = toon,
+                        ["CreatedAt"] = now,
+                        ["UpdatedAt"] = now
+                    });
 
+                    var insertCompiled = _compiler.Compile(insertQuery);
                     using var insertCommand = connection.CreateCommand();
-                    insertCommand.CommandText = insertSql;
-                    insertCommand.Parameters.AddWithValue("@nickname", nickname);
-                    insertCommand.Parameters.AddWithValue("@battleTag", battleTag);
-                    insertCommand.Parameters.AddWithValue("@toon", toon);
-                    insertCommand.Parameters.AddWithValue("@createdAt", now);
-                    insertCommand.Parameters.AddWithValue("@updatedAt", now);
+                    insertCommand.CommandText = insertCompiled.Sql;
+                    foreach (var binding in insertCompiled.Bindings)
+                    {
+                        insertCommand.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    }
 
                     insertCommand.ExecuteNonQuery();
 
@@ -239,6 +281,44 @@ namespace BarcodeRevealTool.Persistence.Replay
             // This would be populated from actual replay parsing
             // For now return null - can be enhanced when full replay parsing is implemented
             return null;
+        }
+
+        private static string NormalizeToonForStorage(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return string.Empty;
+            }
+
+            var span = raw.AsSpan();
+            Span<char> buffer = stackalloc char[span.Length];
+            var idx = 0;
+            foreach (var ch in span)
+            {
+                if (!char.IsControl(ch))
+                {
+                    buffer[idx++] = ch;
+                }
+            }
+
+            return new string(buffer[..idx]).Trim();
+        }
+
+        private static string GetToonSuffix(string? toon)
+        {
+            var normalized = NormalizeToonForStorage(toon);
+            if (string.IsNullOrEmpty(normalized))
+            {
+                return string.Empty;
+            }
+
+            var dashIndex = normalized.IndexOf('-');
+            if (dashIndex >= 0 && dashIndex + 1 < normalized.Length)
+            {
+                return normalized[(dashIndex + 1)..];
+            }
+
+            return normalized;
         }
 
         /// <summary>
@@ -359,9 +439,16 @@ namespace BarcodeRevealTool.Persistence.Replay
             try
             {
                 using var connection = CreateConnection();
-                var sql = "SELECT MAX(ReplayDate) FROM Replays";
+                var query = new Query("Replays")
+                    .SelectRaw("MAX(ReplayDate)");
+                var compiled = _compiler.Compile(query);
+
                 using var command = connection.CreateCommand();
-                command.CommandText = sql;
+                command.CommandText = compiled.Sql;
+                foreach (var binding in compiled.Bindings)
+                {
+                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                }
 
                 var result = command.ExecuteScalar();
                 if (result != null && result != DBNull.Value)
@@ -416,21 +503,30 @@ namespace BarcodeRevealTool.Persistence.Replay
         /// </summary>
         public long? FindPlayerByToonSuffix(string toonSuffix)
         {
+            var normalizedSuffix = GetToonSuffix(toonSuffix);
+            if (string.IsNullOrEmpty(normalizedSuffix))
+                return null;
+
             try
             {
-                if (string.IsNullOrEmpty(toonSuffix))
-                    return null;
-
                 using var connection = CreateConnection();
-                var sql = "SELECT Id FROM Players WHERE Toon LIKE '%' || @suffix LIMIT 1";
+                var query = new Query("Players")
+                    .WhereLike("Toon", $"%{normalizedSuffix}")
+                    .Select("Id")
+                    .Limit(1);
+                var compiled = _compiler.Compile(query);
+
                 using var command = connection.CreateCommand();
-                command.CommandText = sql;
-                command.Parameters.AddWithValue("@suffix", toonSuffix);
+                command.CommandText = compiled.Sql;
+                foreach (var binding in compiled.Bindings)
+                {
+                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                }
 
                 var result = command.ExecuteScalar();
                 if (result != null)
                 {
-                    _logger.Debug("Found player by toon suffix: {ToonSuffix}", toonSuffix);
+                    _logger.Debug("Found player by toon suffix: {ToonSuffix}", normalizedSuffix);
                     return Convert.ToInt64(result);
                 }
 
@@ -438,7 +534,7 @@ namespace BarcodeRevealTool.Persistence.Replay
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Failed to find player by toon suffix: {ToonSuffix}", toonSuffix);
+                _logger.Error(ex, "Failed to find player by toon suffix: {ToonSuffix}", normalizedSuffix);
                 return null;
             }
         }
@@ -448,21 +544,29 @@ namespace BarcodeRevealTool.Persistence.Replay
         /// </summary>
         public long? FindPlayerByToon(string toonId)
         {
+            var normalizedToon = NormalizeToonForStorage(toonId);
+            if (string.IsNullOrEmpty(normalizedToon))
+                return null;
+
             try
             {
-                if (string.IsNullOrEmpty(toonId))
-                    return null;
-
                 using var connection = CreateConnection();
-                var sql = "SELECT Id FROM Players WHERE Toon = @toon";
+                var query = new Query("Players")
+                    .Where("Toon", normalizedToon)
+                    .Select("Id");
+                var compiled = _compiler.Compile(query);
+
                 using var command = connection.CreateCommand();
-                command.CommandText = sql;
-                command.Parameters.AddWithValue("@toon", toonId);
+                command.CommandText = compiled.Sql;
+                foreach (var binding in compiled.Bindings)
+                {
+                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                }
 
                 var result = command.ExecuteScalar();
                 if (result != null)
                 {
-                    _logger.Debug("Found player by toon: {Toon}", toonId);
+                    _logger.Debug("Found player by toon: {Toon}", normalizedToon);
                     return Convert.ToInt64(result);
                 }
 
@@ -470,7 +574,7 @@ namespace BarcodeRevealTool.Persistence.Replay
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Failed to find player by toon: {Toon}", toonId);
+                _logger.Error(ex, "Failed to find player by toon: {Toon}", normalizedToon);
                 return null;
             }
         }

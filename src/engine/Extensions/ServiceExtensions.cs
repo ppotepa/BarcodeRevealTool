@@ -28,6 +28,7 @@ namespace BarcodeRevealTool.Engine.Extensions
 
             services.AddSingleton<IGameStateMonitor, GameStateMonitor>();
             services.AddSingleton<IGameLobbyFactory, GameLobbyFactory>();
+            services.AddSingleton<IDebugLobbyFactory, DebugLobbyFactory>();
             services.AddSingleton<ILobbyProcessor, LobbyProcessor>();
 
             services.TryAddSingleton<IReplayRepository, ReplayDataAccess>();

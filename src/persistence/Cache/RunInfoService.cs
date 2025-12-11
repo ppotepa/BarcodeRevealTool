@@ -1,5 +1,8 @@
 using Serilog;
+using SqlKata;
+using SqlKata.Compilers;
 using System.Data.SQLite;
+using BarcodeRevealTool.Persistence.Schema;
 
 namespace BarcodeRevealTool.Persistence.Cache
 {
@@ -11,11 +14,29 @@ namespace BarcodeRevealTool.Persistence.Cache
     {
         private readonly string _connectionString;
         private readonly ILogger _logger;
+        private readonly SqliteCompiler _compiler = new();
 
         public RunInfoService(string connectionString, ILogger logger)
         {
             _connectionString = connectionString;
             _logger = logger;
+            InitializeSchema();
+        }
+
+        private void InitializeSchema()
+        {
+            try
+            {
+                using var connection = new SQLiteConnection(_connectionString);
+                connection.Open();
+                SchemaLoader.ExecuteSchema(connection, "RunInfo.sql");
+                _logger.Information("RunInfo schema initialized");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to initialize RunInfo schema");
+                throw;
+            }
         }
 
         /// <summary>
@@ -31,9 +52,17 @@ namespace BarcodeRevealTool.Persistence.Cache
 
                 // Get the highest run number
                 int nextRunNumber = 1;
+                var maxQuery = new Query("RunInfo")
+                    .SelectRaw("COALESCE(MAX(RunNumber), 0) + 1");
+                var maxCompiled = _compiler.Compile(maxQuery);
+
                 using (var command = connection.CreateCommand())
                 {
-                    command.CommandText = "SELECT COALESCE(MAX(RunNumber), 0) + 1 FROM RunInfo;";
+                    command.CommandText = maxCompiled.Sql;
+                    foreach (var binding in maxCompiled.Bindings)
+                    {
+                        command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    }
                     var result = command.ExecuteScalar();
                     if (result != null && int.TryParse(result.ToString(), out int maxRun))
                     {
@@ -42,17 +71,22 @@ namespace BarcodeRevealTool.Persistence.Cache
                 }
 
                 // Insert new run entry
+                var insertQuery = new Query("RunInfo").AsInsert(new Dictionary<string, object>
+                {
+                    ["RunNumber"] = nextRunNumber,
+                    ["DateStarted"] = DateTime.UtcNow,
+                    ["Status"] = "InProgress",
+                    ["Mode"] = mode
+                });
+                var insertCompiled = _compiler.Compile(insertQuery);
+
                 using (var command = connection.CreateCommand())
                 {
-                    command.CommandText = @"
-                        INSERT INTO RunInfo (RunNumber, DateStarted, Status, Mode)
-                        VALUES (@runNumber, @dateStarted, @status, @mode);";
-
-                    command.Parameters.AddWithValue("@runNumber", nextRunNumber);
-                    command.Parameters.AddWithValue("@dateStarted", DateTime.UtcNow);
-                    command.Parameters.AddWithValue("@status", "InProgress");
-                    command.Parameters.AddWithValue("@mode", mode);
-
+                    command.CommandText = insertCompiled.Sql;
+                    foreach (var binding in insertCompiled.Bindings)
+                    {
+                        command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    }
                     command.ExecuteNonQuery();
                 }
 
@@ -76,19 +110,22 @@ namespace BarcodeRevealTool.Persistence.Cache
                 using var connection = new SQLiteConnection(_connectionString);
                 connection.Open();
 
+                var updateQuery = new Query("RunInfo")
+                    .Where("RunNumber", runNumber)
+                    .AsUpdate(new Dictionary<string, object>
+                    {
+                        ["DateCompleted"] = DateTime.UtcNow,
+                        ["Status"] = "Completed",
+                        ["TotalReplaysProcessed"] = totalReplaysProcessed
+                    });
+                var updateCompiled = _compiler.Compile(updateQuery);
+
                 using var command = connection.CreateCommand();
-                command.CommandText = @"
-                    UPDATE RunInfo 
-                    SET DateCompleted = @dateCompleted, 
-                        Status = @status, 
-                        TotalReplaysProcessed = @totalReplays
-                    WHERE RunNumber = @runNumber;";
-
-                command.Parameters.AddWithValue("@dateCompleted", DateTime.UtcNow);
-                command.Parameters.AddWithValue("@status", "Completed");
-                command.Parameters.AddWithValue("@totalReplays", totalReplaysProcessed);
-                command.Parameters.AddWithValue("@runNumber", runNumber);
-
+                command.CommandText = updateCompiled.Sql;
+                foreach (var binding in updateCompiled.Bindings)
+                {
+                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                }
                 command.ExecuteNonQuery();
                 _logger.Information("Run {RunNumber} marked as completed with {ReplayCount} replays", runNumber, totalReplaysProcessed);
             }
@@ -108,19 +145,22 @@ namespace BarcodeRevealTool.Persistence.Cache
                 using var connection = new SQLiteConnection(_connectionString);
                 connection.Open();
 
+                var updateQuery = new Query("RunInfo")
+                    .Where("RunNumber", runNumber)
+                    .AsUpdate(new Dictionary<string, object>
+                    {
+                        ["DateCompleted"] = DateTime.UtcNow,
+                        ["Status"] = "Failed",
+                        ["Notes"] = errorMessage ?? "Unknown error"
+                    });
+                var updateCompiled = _compiler.Compile(updateQuery);
+
                 using var command = connection.CreateCommand();
-                command.CommandText = @"
-                    UPDATE RunInfo 
-                    SET DateCompleted = @dateCompleted, 
-                        Status = @status, 
-                        Notes = @notes
-                    WHERE RunNumber = @runNumber;";
-
-                command.Parameters.AddWithValue("@dateCompleted", DateTime.UtcNow);
-                command.Parameters.AddWithValue("@status", "Failed");
-                command.Parameters.AddWithValue("@notes", errorMessage ?? "Unknown error");
-                command.Parameters.AddWithValue("@runNumber", runNumber);
-
+                command.CommandText = updateCompiled.Sql;
+                foreach (var binding in updateCompiled.Bindings)
+                {
+                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                }
                 command.ExecuteNonQuery();
                 _logger.Information("Run {RunNumber} marked as failed", runNumber);
             }
@@ -140,13 +180,17 @@ namespace BarcodeRevealTool.Persistence.Cache
                 using var connection = new SQLiteConnection(_connectionString);
                 connection.Open();
 
-                using var command = connection.CreateCommand();
-                command.CommandText = @"
-                    SELECT RunNumber, DateStarted, DateCompleted, Status 
-                    FROM RunInfo 
-                    WHERE RunNumber = @runNumber;";
+                var selectQuery = new Query("RunInfo")
+                    .Where("RunNumber", runNumber)
+                    .Select("RunNumber", "DateStarted", "DateCompleted", "Status");
+                var selectCompiled = _compiler.Compile(selectQuery);
 
-                command.Parameters.AddWithValue("@runNumber", runNumber);
+                using var command = connection.CreateCommand();
+                command.CommandText = selectCompiled.Sql;
+                foreach (var binding in selectCompiled.Bindings)
+                {
+                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                }
 
                 using var reader = command.ExecuteReader();
                 if (reader.Read())

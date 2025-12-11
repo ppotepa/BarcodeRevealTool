@@ -58,9 +58,10 @@ namespace BarcodeRevealTool.ConsoleApp
                 ConfigureLogging(runNumber);
                 Log.Information("Run Number: {RunNumber}", runNumber);
 
+                var debugSettings = new DebugSettings();
 #if DEBUG
                 // Show startup menu after logging is configured so choices get logged
-                ShowStartupMenu();
+                debugSettings = ShowStartupMenu(config) ?? new DebugSettings();
 #endif
 
                 var services = new ServiceCollection();
@@ -76,6 +77,14 @@ namespace BarcodeRevealTool.ConsoleApp
                 services.AddSingleton(tempRunInfoService ?? new RunInfoService(connectionString, Log.Logger));
 
                 provider = services.BuildServiceProvider();
+
+                // Update AppSettings in the provider with debug settings if set
+                var appSettings = provider.GetRequiredService<AppSettings>();
+                if (debugSettings.ManualBattleTag != null || debugSettings.ManualNickname != null || debugSettings.LobbyFiles?.Count > 0)
+                {
+                    appSettings.Debug = debugSettings;
+                }
+
                 AttachCacheProgressRendering(provider);
 
                 // Initialize cache based on mode and lock file presence
@@ -226,7 +235,7 @@ namespace BarcodeRevealTool.ConsoleApp
             }
         }
 
-        private static string ShowStartupMenu()
+        private static DebugSettings? ShowStartupMenu(IConfiguration config)
         {
             Console.WriteLine();
             Console.WriteLine("===============================================================");
@@ -236,12 +245,13 @@ namespace BarcodeRevealTool.ConsoleApp
             Console.WriteLine("  1. Start (normal operation with cached data)");
             Console.WriteLine("  2. Start Fresh (delete cache and restart)");
             Console.WriteLine("  3. SC2Pulse API Debugger (tools only)");
+            Console.WriteLine("  4. Debug Mode (test with manual players or debug lobbies)");
             Console.WriteLine();
 
             string choice = string.Empty;
             while (true)
             {
-                Console.Write("Select option (1-3): ");
+                Console.Write("Select option (1-4): ");
                 choice = Console.ReadLine() ?? string.Empty;
 
                 if (choice == "1")
@@ -274,6 +284,15 @@ namespace BarcodeRevealTool.ConsoleApp
                     continue;
                 }
 
+                if (choice == "4")
+                {
+                    Console.ForegroundColor = ConsoleColor.Magenta;
+                    Console.WriteLine("Entering Debug Mode...");
+                    Console.ResetColor();
+                    Log.Information("User selected: Debug Mode (option 4)");
+                    return ShowDebugMenu(config);
+                }
+
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine("Invalid choice.");
                 Console.ResetColor();
@@ -281,7 +300,119 @@ namespace BarcodeRevealTool.ConsoleApp
             }
 
             Console.WriteLine();
-            return choice;
+            return null;
+        }
+
+        private static DebugSettings ShowDebugMenu(IConfiguration config)
+        {
+            Console.WriteLine();
+            Console.WriteLine("===============================================================");
+            Console.WriteLine("                     DEBUG MODE OPTIONS                        ");
+            Console.WriteLine("===============================================================");
+            Console.WriteLine();
+            Console.WriteLine("  1. Use lobby files from debug/lobbies/ folder");
+            Console.WriteLine("  2. Enter opponent details manually");
+            Console.WriteLine();
+
+            var appSettings = new AppSettings();
+            config.GetSection("barcodeReveal").Bind(appSettings);
+            var debugSettings = new DebugSettings();
+
+            string choice = string.Empty;
+            while (true)
+            {
+                Console.Write("Select option (1-2): ");
+                choice = Console.ReadLine() ?? string.Empty;
+
+                if (choice == "1")
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine("Using debug lobby files...");
+                    Console.ResetColor();
+                    Log.Information("User selected: Debug lobby folder mode");
+
+                    // Load lobby files from folder
+                    string debugFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug", "lobbies");
+                    if (Directory.Exists(debugFolder))
+                    {
+                        var lobbyFiles = Directory.GetFiles(debugFolder, "*.sc2replay", SearchOption.TopDirectoryOnly)
+                            .OrderBy(f => f)
+                            .ToList();
+
+                        if (lobbyFiles.Count > 0)
+                        {
+                            debugSettings.LobbyFiles = lobbyFiles;
+                            Console.WriteLine($"  Found {lobbyFiles.Count} lobby file(s) in {debugFolder}");
+                            foreach (var file in lobbyFiles)
+                            {
+                                Console.WriteLine($"    - {Path.GetFileName(file)}");
+                            }
+                            Log.Information("Debug mode: Loaded {Count} lobby files from folder: {Folder}", lobbyFiles.Count, debugFolder);
+                        }
+                        else
+                        {
+                            Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.WriteLine($"No .sc2replay files found in {debugFolder}");
+                            Console.ResetColor();
+                            Log.Warning("Debug mode: No lobby files found in folder: {Folder}", debugFolder);
+                        }
+                    }
+                    else
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"Folder not found: {debugFolder}");
+                        Console.ResetColor();
+                        Log.Error("Debug mode: Lobby folder not found: {Folder}", debugFolder);
+                    }
+                    break;
+                }
+
+                if (choice == "2")
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine("Manual opponent entry mode...");
+                    Console.ResetColor();
+                    Log.Information("User selected: Manual opponent entry mode");
+
+                    Console.WriteLine();
+                    Console.Write("Enter opponent battle tag (e.g., Opponent#1234): ");
+                    string battleTag = Console.ReadLine() ?? string.Empty;
+
+                    Console.Write("Enter opponent nickname: ");
+                    string nickname = Console.ReadLine() ?? string.Empty;
+
+                    if (!string.IsNullOrEmpty(battleTag) && !string.IsNullOrEmpty(nickname))
+                    {
+                        Console.WriteLine();
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"Debug mode: Using opponent {nickname} ({battleTag})");
+                        Console.ResetColor();
+
+                        // Store in debug settings to return
+                        debugSettings.ManualBattleTag = battleTag;
+                        debugSettings.ManualNickname = nickname;
+
+                        Log.Information("Debug mode: Manual opponent set - {Nickname} ({BattleTag})", nickname, battleTag);
+                    }
+                    else
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine("Invalid input. Please try again.");
+                        Console.ResetColor();
+                        Log.Warning("Debug mode: Invalid opponent details provided");
+                        continue;
+                    }
+                    break;
+                }
+
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Invalid choice.");
+                Console.ResetColor();
+                Log.Warning("Invalid debug menu choice entered: {Choice}", choice);
+            }
+
+            Console.WriteLine();
+            return debugSettings;
         }
 
         private static void DeleteCacheFiles()
