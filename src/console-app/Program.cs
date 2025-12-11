@@ -200,6 +200,10 @@ namespace BarcodeRevealTool.ConsoleApp
             {
                 await cacheManager.InitializeAsync();
 
+                // Always ensure system tables exist (RunInfo, Players, ReplayFiles, DebugSession)
+                // even if cache.lock exists - these are critical for operation
+                await RepairSystemTablesAsync();
+
                 // If cache.lock exists, the cache was previously initialized and is valid
                 // Trust the cached data and don't re-extract
                 if (lockFileExists)
@@ -232,6 +236,88 @@ namespace BarcodeRevealTool.ConsoleApp
             {
                 Log.Error(ex, "Failed to initialize cache");
                 throw;
+            }
+        }
+
+        private static async Task RepairSystemTablesAsync()
+        {
+            try
+            {
+                var dbPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "_db", "cache.db");
+                var connectionString = $"Data Source={dbPath};";
+
+                await Task.Run(() =>
+                {
+                    using var connection = new System.Data.SQLite.SQLiteConnection(connectionString);
+                    connection.Open();
+
+                    // Check which system tables exist
+                    var missingTables = new List<string>();
+                    var systemTables = new[] { "RunInfo", "Players", "ReplayFiles", "DebugSession", "UserConfig" };
+
+                    foreach (var tableName in systemTables)
+                    {
+                        if (!TableExists(connection, tableName))
+                        {
+                            missingTables.Add(tableName);
+                        }
+                    }
+
+                    if (missingTables.Count > 0)
+                    {
+                        Log.Warning("Found missing system tables: {Tables}. Recreating...", string.Join(", ", missingTables));
+
+                        // Recreate missing tables
+                        var tableSchemaMap = new Dictionary<string, string>
+                        {
+                            { "RunInfo", "RunInfo.sql" },
+                            { "Players", "Players.sql" },
+                            { "ReplayFiles", "ReplayFiles.sql" },
+                            { "DebugSession", "Debug.sql" },
+                            { "UserConfig", "UserConfig.sql" }
+                        };
+
+                        foreach (var table in missingTables)
+                        {
+                            if (tableSchemaMap.TryGetValue(table, out var schemaFile))
+                            {
+                                try
+                                {
+                                    BarcodeRevealTool.Persistence.Schema.SchemaLoader.ExecuteSchema(connection, schemaFile);
+                                    Log.Information("Recreated table: {Table}", table);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Log.Error(ex, "Failed to recreate table {Table}", table);
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Log.Information("All system tables exist and are valid");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to repair system tables");
+                throw;
+            }
+        }
+
+        private static bool TableExists(System.Data.SQLite.SQLiteConnection connection, string tableName)
+        {
+            try
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = $"SELECT 1 FROM sqlite_master WHERE type='table' AND name=@tableName LIMIT 1";
+                command.Parameters.Add(new System.Data.SQLite.SQLiteParameter("@tableName", tableName));
+                return command.ExecuteScalar() != null;
+            }
+            catch
+            {
+                return false;
             }
         }
 

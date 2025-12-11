@@ -155,13 +155,16 @@ Spectre.Console UI host:
   - Links to external profiles (Twitch, Twitter, Liquipedia, etc.)
 
 ### Data Persistence
-**Single SQLite Database** (`replays.db`):
-- Players table: battle tag, toon ID, MMR from SC2Pulse
-- ReplayFiles table: replay metadata and file references
-- BuildOrders table: parsed build order steps with timestamps
-- Maps table: map information
-- Insert-only policy: replays never deleted once cached
+**Unified SQLite Database** (`cache.db`):
+- **RunInfo table**: Run tracking with timestamps, status, and processed replay counts
+- **Players table**: Battle tag, toon ID, nickname, and player identity tracking
+- **ReplayFiles table**: Replay metadata and file references
+- **DebugSession table**: Debug mode data including manual opponents and binary lobby file storage
+- **UserConfig table**: User settings (BattleTag, replay folder, etc.) with change history tracking
+- **ConfigHistory table**: Complete history of configuration changes with timestamps
+- Insert-only replay policy: replays never deleted once cached
 - Thread-safe access with locking during parallel processing
+- Automatic schema repair: Missing tables recreated on startup regardless of cache.lock state
 
 ## Data Flow
 

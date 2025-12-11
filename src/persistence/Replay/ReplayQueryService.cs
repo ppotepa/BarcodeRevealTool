@@ -28,7 +28,7 @@ namespace BarcodeRevealTool.Persistence.Replay
             );
 
             Directory.CreateDirectory(dbPath);
-            var databasePath = Path.Combine(dbPath, "replays.db");
+            var databasePath = Path.Combine(dbPath, "cache.db");
 
             var builder = new SQLiteConnectionStringBuilder
             {
@@ -86,9 +86,10 @@ namespace BarcodeRevealTool.Persistence.Replay
 
                 using var checkCommand = connection.CreateCommand();
                 checkCommand.CommandText = checkCompiled.Sql;
-                foreach (var binding in checkCompiled.Bindings)
+                checkCommand.Parameters.Clear();
+                for (int i = 0; i < checkCompiled.Bindings.Count; i++)
                 {
-                    checkCommand.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    checkCommand.Parameters.Add(new SQLiteParameter($"@p{i}", checkCompiled.Bindings[i] ?? DBNull.Value));
                 }
 
                 var existingId = checkCommand.ExecuteScalar();
@@ -125,15 +126,17 @@ namespace BarcodeRevealTool.Persistence.Replay
                 var insertCompiled = _compiler.Compile(insertQuery);
                 using var insertCommand = connection.CreateCommand();
                 insertCommand.CommandText = insertCompiled.Sql;
-                foreach (var binding in insertCompiled.Bindings)
+                insertCommand.Parameters.Clear();
+                for (int i = 0; i < insertCompiled.Bindings.Count; i++)
                 {
-                    insertCommand.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    insertCommand.Parameters.Add(new SQLiteParameter($"@p{i}", insertCompiled.Bindings[i] ?? DBNull.Value));
                 }
                 insertCommand.ExecuteNonQuery();
 
-                // Get the inserted ID
-                insertCommand.CommandText = "SELECT last_insert_rowid()";
-                var newId = insertCommand.ExecuteScalar();
+                // Get the inserted ID using a separate command to avoid parameter binding issues
+                using var lastIdCommand = connection.CreateCommand();
+                lastIdCommand.CommandText = "SELECT last_insert_rowid()";
+                var newId = lastIdCommand.ExecuteScalar();
 
                 _logger.Debug("Stored replay: {YourPlayer} vs {OpponentPlayer} on {Map}",
                     metadata.YourPlayer, metadata.OpponentPlayer, metadata.Map);
@@ -176,9 +179,10 @@ namespace BarcodeRevealTool.Persistence.Replay
 
                         using var checkCommand = connection.CreateCommand();
                         checkCommand.CommandText = checkCompiled.Sql;
-                        foreach (var binding in checkCompiled.Bindings)
+                        checkCommand.Parameters.Clear();
+                        for (int i = 0; i < checkCompiled.Bindings.Count; i++)
                         {
-                            checkCommand.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                            checkCommand.Parameters.Add(new SQLiteParameter($"@p{i}", checkCompiled.Bindings[i] ?? DBNull.Value));
                         }
 
                         var existingId = checkCommand.ExecuteScalar();
@@ -197,9 +201,10 @@ namespace BarcodeRevealTool.Persistence.Replay
 
                     using var battleTagCheckCommand = connection.CreateCommand();
                     battleTagCheckCommand.CommandText = battleTagCompiled.Sql;
-                    foreach (var binding in battleTagCompiled.Bindings)
+                    battleTagCheckCommand.Parameters.Clear();
+                    for (int i = 0; i < battleTagCompiled.Bindings.Count; i++)
                     {
-                        battleTagCheckCommand.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                        battleTagCheckCommand.Parameters.Add(new SQLiteParameter($"@p{i}", battleTagCompiled.Bindings[i] ?? DBNull.Value));
                     }
 
                     var battleTagId = battleTagCheckCommand.ExecuteScalar();
@@ -223,9 +228,10 @@ namespace BarcodeRevealTool.Persistence.Replay
 
                             using var suffixCheckCommand = connection.CreateCommand();
                             suffixCheckCommand.CommandText = suffixCompiled.Sql;
-                            foreach (var binding in suffixCompiled.Bindings)
+                            suffixCheckCommand.Parameters.Clear();
+                            for (int i = 0; i < suffixCompiled.Bindings.Count; i++)
                             {
-                                suffixCheckCommand.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                                suffixCheckCommand.Parameters.Add(new SQLiteParameter($"@p{i}", suffixCompiled.Bindings[i] ?? DBNull.Value));
                             }
 
                             var suffixId = suffixCheckCommand.ExecuteScalar();
@@ -252,15 +258,18 @@ namespace BarcodeRevealTool.Persistence.Replay
                     var insertCompiled = _compiler.Compile(insertQuery);
                     using var insertCommand = connection.CreateCommand();
                     insertCommand.CommandText = insertCompiled.Sql;
-                    foreach (var binding in insertCompiled.Bindings)
+                    insertCommand.Parameters.Clear();
+                    for (int i = 0; i < insertCompiled.Bindings.Count; i++)
                     {
-                        insertCommand.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                        insertCommand.Parameters.Add(new SQLiteParameter($"@p{i}", insertCompiled.Bindings[i] ?? DBNull.Value));
                     }
 
                     insertCommand.ExecuteNonQuery();
 
-                    insertCommand.CommandText = "SELECT last_insert_rowid()";
-                    var newId = insertCommand.ExecuteScalar();
+                    // Get the inserted ID using a separate command to avoid parameter binding issues
+                    using var lastIdCommand = connection.CreateCommand();
+                    lastIdCommand.CommandText = "SELECT last_insert_rowid()";
+                    var newId = lastIdCommand.ExecuteScalar();
 
                     _logger.Debug("Created player: {Nickname} ({Toon})", nickname, toon);
                     return Convert.ToInt64(newId ?? 0);
@@ -365,9 +374,10 @@ namespace BarcodeRevealTool.Persistence.Replay
 
                 using var command = connection.CreateCommand();
                 command.CommandText = compiled.Sql;
-                foreach (var binding in compiled.Bindings)
+                command.Parameters.Clear();
+                for (int i = 0; i < compiled.Bindings.Count; i++)
                 {
-                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    command.Parameters.Add(new SQLiteParameter($"@p{i}", compiled.Bindings[i] ?? DBNull.Value));
                 }
 
                 using var reader = command.ExecuteReader();
@@ -410,9 +420,10 @@ namespace BarcodeRevealTool.Persistence.Replay
 
                 using var command = connection.CreateCommand();
                 command.CommandText = compiled.Sql;
-                foreach (var binding in compiled.Bindings)
+                command.Parameters.Clear();
+                for (int i = 0; i < compiled.Bindings.Count; i++)
                 {
-                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    command.Parameters.Add(new SQLiteParameter($"@p{i}", compiled.Bindings[i] ?? DBNull.Value));
                 }
 
                 var result = command.ExecuteScalar();
@@ -445,9 +456,10 @@ namespace BarcodeRevealTool.Persistence.Replay
 
                 using var command = connection.CreateCommand();
                 command.CommandText = compiled.Sql;
-                foreach (var binding in compiled.Bindings)
+                command.Parameters.Clear();
+                for (int i = 0; i < compiled.Bindings.Count; i++)
                 {
-                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    command.Parameters.Add(new SQLiteParameter($"@p{i}", compiled.Bindings[i] ?? DBNull.Value));
                 }
 
                 var result = command.ExecuteScalar();
@@ -482,9 +494,10 @@ namespace BarcodeRevealTool.Persistence.Replay
                 var compiled = _compiler.Compile(query);
 
                 command.CommandText = compiled.Sql;
-                foreach (var binding in compiled.Bindings)
+                command.Parameters.Clear();
+                for (int i = 0; i < compiled.Bindings.Count; i++)
                 {
-                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    command.Parameters.Add(new SQLiteParameter($"@p{i}", compiled.Bindings[i] ?? DBNull.Value));
                 }
 
                 var result = command.ExecuteScalar();
@@ -518,9 +531,10 @@ namespace BarcodeRevealTool.Persistence.Replay
 
                 using var command = connection.CreateCommand();
                 command.CommandText = compiled.Sql;
-                foreach (var binding in compiled.Bindings)
+                command.Parameters.Clear();
+                for (int i = 0; i < compiled.Bindings.Count; i++)
                 {
-                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    command.Parameters.Add(new SQLiteParameter($"@p{i}", compiled.Bindings[i] ?? DBNull.Value));
                 }
 
                 var result = command.ExecuteScalar();
@@ -558,9 +572,10 @@ namespace BarcodeRevealTool.Persistence.Replay
 
                 using var command = connection.CreateCommand();
                 command.CommandText = compiled.Sql;
-                foreach (var binding in compiled.Bindings)
+                command.Parameters.Clear();
+                for (int i = 0; i < compiled.Bindings.Count; i++)
                 {
-                    command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    command.Parameters.Add(new SQLiteParameter($"@p{i}", compiled.Bindings[i] ?? DBNull.Value));
                 }
 
                 var result = command.ExecuteScalar();
