@@ -7,9 +7,12 @@ namespace BarcodeRevealTool.Persistence.Repositories.Entities
     {
         public int RunNumber { get; set; }
         public string? PresetUserBattleTag { get; set; }
+        public string? ManualOpponentBattleTag { get; set; }
+        public string? ManualOpponentNickname { get; set; }
         public int TotalMatchesPlayed { get; set; }
         public int TotalLobbiesProcessed { get; set; }
         public string Status { get; set; } = "InProgress"; // InProgress, Completed, Failed
         public int? ExitCode { get; set; }
+        public DateTime? DateCompleted { get; set; }
     }
 }

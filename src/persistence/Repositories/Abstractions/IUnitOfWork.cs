@@ -10,8 +10,6 @@ namespace BarcodeRevealTool.Persistence.Repositories.Abstractions
         // Debug & Tracking Repositories
         IRepository<Entities.DebugSessionEntity> DebugSessions { get; }
         IRepository<Entities.LobbyFileEntity> LobbyFiles { get; }
-        IRepository<Entities.DebugSessionEventEntity> DebugSessionEvents { get; }
-        IRepository<Entities.ConfigHistoryEntity> ConfigHistory { get; }
 
         // Replay & Game Data Repositories
         IReplayFileRepository Replays { get; }

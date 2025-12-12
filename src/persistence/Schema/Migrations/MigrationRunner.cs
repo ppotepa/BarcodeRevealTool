@@ -1,6 +1,11 @@
-using Serilog;
+using System;
+using System.Collections.Generic;
 using System.Data.SQLite;
+using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
+using Serilog;
 using Spectre.Console;
 
 namespace BarcodeRevealTool.Persistence.Schema.Migrations
@@ -32,19 +37,18 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
 
                 using var command = connection.CreateCommand();
                 command.CommandText = @"
-                    CREATE TABLE IF NOT EXISTS __MigrationHistory (
-                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        MigrationName TEXT NOT NULL UNIQUE,
-                        Version TEXT NOT NULL,
-                        ExecutedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        ExecutionTimeMs INTEGER,
-                        Status TEXT NOT NULL DEFAULT 'Success',
-                        ErrorMessage TEXT
-                    );
-                    
-                    CREATE INDEX IF NOT EXISTS idx_migration_name ON __MigrationHistory(MigrationName);
-                    CREATE INDEX IF NOT EXISTS idx_migration_version ON __MigrationHistory(Version);
-                ";
+CREATE TABLE IF NOT EXISTS __MigrationHistory (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    MigrationName TEXT NOT NULL UNIQUE,
+    Version TEXT NOT NULL,
+    ExecutedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ExecutionTimeMs INTEGER,
+    Status TEXT NOT NULL DEFAULT 'Success',
+    ErrorMessage TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_migration_name ON __MigrationHistory(MigrationName);
+CREATE INDEX IF NOT EXISTS idx_migration_version ON __MigrationHistory(Version);
+";
 
                 command.ExecuteNonQuery();
                 _logger.Debug("Migration tracking table initialized");
@@ -81,33 +85,36 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
                 result.TotalMigrations = migrations.Count;
                 _logger.Information("Starting migration execution. Found {MigrationCount} migrations", migrations.Count);
 
-                // Display progress bar using Spectre.Console
                 await AnsiConsole.Progress()
                     .StartAsync(async ctx =>
                     {
                         var task = ctx.AddTask("[bold cyan]Running Migrations[/]", maxValue: migrations.Count);
 
+                        var index = 0;
                         foreach (var migration in migrations)
                         {
+                            index++;
                             var executed = IsMigrationExecuted(connection, migration.Name);
                             if (executed)
                             {
+                                AnsiConsole.MarkupLine($"[grey]Skipping already applied migration ({index}/{migrations.Count}):[/] {migration.Name}");
                                 _logger.Debug("Migration already executed: {MigrationName}", migration.Name);
                                 result.SkippedMigrations++;
                                 task.Increment(1);
                                 continue;
                             }
 
-                            task.Description = $"[bold cyan]{migration.Name}[/]";
+                            task.Description = $"[bold cyan]{migration.Name} ({index}/{migrations.Count})[/]";
+                            AnsiConsole.MarkupLine($"[yellow]Executing migration ({index}/{migrations.Count}):[/] {migration.Name} (v{migration.Version})");
                             _logger.Information("Executing migration: {MigrationName} (v{Version})", migration.Name, migration.Version);
                             await ExecuteMigrationAsync(connection, migration, result);
                             task.Increment(1);
                         }
                     });
 
-                result.Success = true;
-                _logger.Information("All migrations completed successfully. Executed: {Executed}, Skipped: {Skipped}",
-                    result.ExecutedMigrations, result.SkippedMigrations);
+                result.Success = result.FailedMigrations == 0;
+                _logger.Information("Migrations completed. Executed: {Executed}, Skipped: {Skipped}, Failed: {Failed}",
+                    result.ExecutedMigrations, result.SkippedMigrations, result.FailedMigrations);
             }
             catch (Exception ex)
             {
@@ -137,10 +144,27 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
 
                 RecordMigration(connection, migration.Name, migration.Version, (long)executionTime, "Success", null);
 
+                AnsiConsole.MarkupLine($"[green]✔[/] {migration.Name} completed in {executionTime:F0}ms");
+
                 _logger.Information("Migration executed successfully: {MigrationName} (v{Version}) in {ExecutionTime}ms",
                     migration.Name, migration.Version, executionTime);
 
                 result.ExecutedMigrations++;
+            }
+            catch (SQLiteException sqliteEx)
+            {
+                var executionTime = (DateTime.UtcNow - startTime).TotalMilliseconds;
+
+                RecordMigration(connection, migration.Name, migration.Version, (long)executionTime, "Failed", sqliteEx.Message);
+
+                AnsiConsole.MarkupLine($"[red]✗[/] {migration.Name} [bold red]FAILED[/]: {sqliteEx.Message}");
+                _logger.Error(sqliteEx, "Migration execution failed: {MigrationName}", migration.Name);
+
+                result.FailedMigrations++;
+                result.ErrorMessage = sqliteEx.Message;
+
+                // Surface the error so the caller sees the problem, e.g. "there is already another table or index with this name: BuildOrders"
+                throw;
             }
             catch (Exception ex)
             {
@@ -148,7 +172,8 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
 
                 RecordMigration(connection, migration.Name, migration.Version, (long)executionTime, "Failed", ex.Message);
 
-                _logger.Error(ex, "Migration failed: {MigrationName} (v{Version})", migration.Name, migration.Version);
+                AnsiConsole.MarkupLine($"[red]✗[/] {migration.Name} [bold red]FAILED[/]: {ex.Message}");
+                _logger.Error(ex, "Migration execution failed: {MigrationName}", migration.Name);
 
                 result.FailedMigrations++;
                 result.ErrorMessage = ex.Message;
@@ -158,7 +183,7 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
         }
 
         /// <summary>
-        /// Get all pending migrations in order.
+        /// Get all available migrations in order.
         /// </summary>
         private List<MigrationInfo> GetAllMigrations()
         {
@@ -239,8 +264,8 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
                 command.CommandText = "SELECT COUNT(*) FROM __MigrationHistory WHERE MigrationName = @name AND Status = 'Success';";
                 command.Parameters.AddWithValue("@name", migrationName);
 
-                var result = command.ExecuteScalar();
-                var count = result != null ? Convert.ToInt64(result) : 0;
+                var scalar = command.ExecuteScalar();
+                var count = scalar != null ? Convert.ToInt64(scalar) : 0;
                 return count > 0;
             }
             catch (Exception ex)
@@ -260,9 +285,9 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
             {
                 using var command = connection.CreateCommand();
                 command.CommandText = @"
-                    INSERT INTO __MigrationHistory (MigrationName, Version, ExecutionTimeMs, Status, ErrorMessage)
-                    VALUES (@name, @version, @executionTime, @status, @errorMessage);
-                ";
+INSERT INTO __MigrationHistory (MigrationName, Version, ExecutionTimeMs, Status, ErrorMessage)
+VALUES (@name, @version, @executionTime, @status, @errorMessage);
+";
 
                 command.Parameters.AddWithValue("@name", migrationName);
                 command.Parameters.AddWithValue("@version", version);
@@ -292,10 +317,10 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
 
                 using var command = connection.CreateCommand();
                 command.CommandText = @"
-                    SELECT MigrationName, Version, ExecutedAt, ExecutionTimeMs, Status, ErrorMessage
-                    FROM __MigrationHistory
-                    ORDER BY ExecutedAt DESC;
-                ";
+SELECT MigrationName, Version, ExecutedAt, ExecutionTimeMs, Status, ErrorMessage
+FROM __MigrationHistory
+ORDER BY ExecutedAt DESC;
+";
 
                 using var reader = command.ExecuteReader();
                 while (reader.Read())
@@ -307,7 +332,7 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
                         ExecutedAt = DateTime.Parse(reader["ExecutedAt"].ToString() ?? DateTime.UtcNow.ToString("O")),
                         ExecutionTimeMs = Convert.ToInt64(reader["ExecutionTimeMs"] ?? 0),
                         Status = reader["Status"].ToString() ?? "Unknown",
-                        ErrorMessage = reader["ErrorMessage"] != DBNull.Value ? reader["ErrorMessage"].ToString() : null
+                        ErrorMessage = reader["ErrorMessage"] != DBNull.Value ? reader["ErrorMessage"]?.ToString() : null
                     });
                 }
             }
@@ -334,8 +359,8 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
 
         public override string ToString()
         {
-            return $"Migrations: Executed={ExecutedMigrations}, Skipped={SkippedMigrations}, Failed={FailedMigrations}, " +
-                   $"Status={(Success ? "Success" : "Failed")}";
+            return
+                $"Migrations: Executed={ExecutedMigrations}, Skipped={SkippedMigrations}, Failed={FailedMigrations}, Status={(Success ? "Success" : "Failed")}";
         }
     }
 
@@ -363,3 +388,4 @@ namespace BarcodeRevealTool.Persistence.Schema.Migrations
         public string ResourceName { get; set; } = string.Empty;
     }
 }
+

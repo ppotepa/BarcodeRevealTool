@@ -1,3 +1,4 @@
+using BarcodeRevealTool.Engine.Abstractions;
 using BarcodeRevealTool.Engine.Domain.Abstractions;
 using BarcodeRevealTool.Persistence.Cache;
 using BarcodeRevealTool.Persistence.Database;
@@ -65,6 +66,7 @@ namespace BarcodeRevealTool.Persistence.Extensions
                 var unitOfWork = sp.GetRequiredService<IUnitOfWork>();
                 return new LobbyFileService(unitOfWork);
             });
+            services.AddSingleton<UserConfigService>();
             services.AddSingleton<ConfigInitializationService>();
             services.AddSingleton(sp =>
             {
@@ -75,7 +77,15 @@ namespace BarcodeRevealTool.Persistence.Extensions
                 return new DataTrackingIntegrationService(lobbyFileService, configService, unitOfWork);
             });
 
+            // Register the data tracker adapter for the Engine to use
+            services.AddSingleton<IDataTracker>(sp =>
+            {
+                var dataTrackingService = sp.GetRequiredService<DataTrackingIntegrationService>();
+                return new DataTrackerAdapter(dataTrackingService);
+            });
+
             return services;
         }
     }
 }
+

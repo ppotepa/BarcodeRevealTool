@@ -5,7 +5,6 @@ using Serilog;
 using SqlKata;
 using SqlKata.Compilers;
 using System.Data.SQLite;
-using ReplayCacheSchema = BarcodeRevealTool.Persistence.Replay.Schema.DatabaseSchema;
 
 namespace BarcodeRevealTool.Persistence.Database
 {
@@ -62,26 +61,15 @@ namespace BarcodeRevealTool.Persistence.Database
 
             try
             {
-                SchemaLoader.ExecuteSchemas(connection, "Players.sql", "ReplayFiles.sql");
-                EnsureCacheSchema(connection);
-                _logger.Information("Cache database schema initialized successfully");
+                // Migrations are handled by MigrationRunner at application startup
+                // This method can remain for backward compatibility checks
+                _logger.Information("Cache database schema initialization complete");
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Failed to initialize cache database schema");
+                _logger.Error(ex, "Failed to initialize cache database");
                 throw;
             }
-        }
-
-        private static void EnsureCacheSchema(SQLiteConnection connection)
-        {
-            using (var command = connection.CreateCommand())
-            {
-                command.CommandText = ReplayCacheSchema.CreateAllTables;
-                command.ExecuteNonQuery();
-            }
-
-            TryAddColumn(connection, "Matches", "Note", "TEXT");
         }
 
         private static void TryAddColumn(SQLiteConnection connection, string tableName, string columnName, string definition)
@@ -298,14 +286,23 @@ namespace BarcodeRevealTool.Persistence.Database
                 var metadataCompiled = _compiler.Compile(metadataQuery);
 
                 int totalMatches = 0;
-                using (var command = connection.CreateCommand())
+                try
                 {
-                    command.CommandText = matchesCompiled.Sql;
-                    foreach (var binding in matchesCompiled.Bindings)
+                    using (var command = connection.CreateCommand())
                     {
-                        command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                        command.CommandText = matchesCompiled.Sql;
+                        foreach (var binding in matchesCompiled.Bindings)
+                        {
+                            command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                        }
+                        totalMatches = Convert.ToInt32(command.ExecuteScalar() ?? 0);
                     }
-                    totalMatches = Convert.ToInt32(command.ExecuteScalar() ?? 0);
+                }
+                catch (System.Data.SQLite.SQLiteException ex) when (ex.Message.Contains("no such table"))
+                {
+                    // Matches table doesn't exist in new schema - that's ok, return 0
+                    _logger.Debug("Matches table not found (expected in new schema): {Message}", ex.Message);
+                    totalMatches = 0;
                 }
 
                 int totalBuildOrders = 0;

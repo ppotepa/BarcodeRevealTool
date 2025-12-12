@@ -25,15 +25,25 @@ namespace BarcodeRevealTool.Persistence.Repositories
             _tableName = GetTableName();
             _logger = Log.ForContext<Repository<T>>();
         }
-
         /// <summary>Infer table name from entity type.</summary>
         private static string GetTableName()
         {
             var name = typeof(T).Name;
-            // DebugSessionEntity -> DebugSession, LobbyFileEntity -> LobbyFile, etc
+            // Remove "Entity" suffix first
             if (name.EndsWith("Entity"))
-                return name[..^6]; // Remove "Entity" suffix
-            return name;
+                name = name[..^6];
+
+            // Apply pluralization rules
+            return name switch
+            {
+                "UserConfig" => "UserConfig",    // Singular - only one config
+                "RunInfo" => "RunInfo",          // Singular - run tracking
+                "DebugSession" => "DebugSession", // Singular - session tracking
+                "Players" => "Players",           // Already plural
+                "ReplayFiles" => "ReplayFiles",   // Already plural
+                // Default: add 's' for plural (LobbyFile -> LobbyFiles, BuildOrder -> BuildOrders, etc)
+                _ => name.EndsWith("s") ? name : name + "s"
+            };
         }
 
         private SQLiteConnection CreateConnection()
@@ -68,10 +78,14 @@ namespace BarcodeRevealTool.Persistence.Repositories
 
                     using var command = connection.CreateCommand();
                     command.CommandText = compiled.Sql;
-                    foreach (var binding in compiled.Bindings)
+
+                    // Add named parameters from bindings
+                    for (int i = 0; i < compiled.Bindings.Count; i++)
                     {
-                        command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                        var paramName = $"@p{i}";
+                        command.Parameters.AddWithValue(paramName, compiled.Bindings[i] ?? DBNull.Value);
                     }
+
                     command.ExecuteNonQuery();
 
                     using var lastIdCommand = connection.CreateCommand();
@@ -117,9 +131,10 @@ namespace BarcodeRevealTool.Persistence.Repositories
 
                     using var command = connection.CreateCommand();
                     command.CommandText = compiled.Sql;
-                    foreach (var binding in compiled.Bindings)
+                    for (int i = 0; i < compiled.Bindings.Count; i++)
                     {
-                        command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                        var paramName = $"@p{i}";
+                        command.Parameters.AddWithValue(paramName, compiled.Bindings[i] ?? DBNull.Value);
                     }
 
                     using var reader = command.ExecuteReader();
@@ -152,9 +167,12 @@ namespace BarcodeRevealTool.Persistence.Repositories
                     var entities = new List<T>();
                     using var command = connection.CreateCommand();
                     command.CommandText = compiled.Sql;
-                    foreach (var binding in compiled.Bindings)
+
+                    // Add named parameters from bindings
+                    for (int i = 0; i < compiled.Bindings.Count; i++)
                     {
-                        command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                        var paramName = $"@p{i}";
+                        command.Parameters.AddWithValue(paramName, compiled.Bindings[i] ?? DBNull.Value);
                     }
 
                     using var reader = command.ExecuteReader();
@@ -200,9 +218,12 @@ namespace BarcodeRevealTool.Persistence.Repositories
 
                     using var command = connection.CreateCommand();
                     command.CommandText = compiled.Sql;
-                    foreach (var binding in compiled.Bindings)
+
+                    // Add named parameters from bindings
+                    for (int i = 0; i < compiled.Bindings.Count; i++)
                     {
-                        command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                        var paramName = $"@p{i}";
+                        command.Parameters.AddWithValue(paramName, compiled.Bindings[i] ?? DBNull.Value);
                     }
 
                     int result = command.ExecuteNonQuery();
@@ -241,9 +262,10 @@ namespace BarcodeRevealTool.Persistence.Repositories
 
                     using var command = connection.CreateCommand();
                     command.CommandText = compiled.Sql;
-                    foreach (var binding in compiled.Bindings)
+                    for (int i = 0; i < compiled.Bindings.Count; i++)
                     {
-                        command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                        var paramName = $"@p{i}";
+                        command.Parameters.AddWithValue(paramName, compiled.Bindings[i] ?? DBNull.Value);
                     }
 
                     int result = command.ExecuteNonQuery();

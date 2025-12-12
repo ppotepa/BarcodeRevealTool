@@ -1,0 +1,22 @@
+  Determining projects to restore...
+  Restored C:\Users\pawel\source\repos\BarcodeRevealTool\src\sc2pulse\Sc2PulseClient.csproj (in 112 ms).
+  Restored C:\Users\pawel\source\repos\BarcodeRevealTool\src\persistence\BarcodeRevealTool.Persistence.csproj (in 480 ms).
+  Restored C:\Users\pawel\source\repos\BarcodeRevealTool\src\console-app\BarcodeRevealTool.ConsoleApp.csproj (in 480 ms).
+  Restored C:\Users\pawel\source\repos\BarcodeRevealTool\src\engine\BarcodeRevealTool.Engine.csproj (in 480 ms).
+C:\Program Files\dotnet\sdk\10.0.100-rc.2.25502.107\Sdks\Microsoft.NET.Sdk\targets\Microsoft.NET.RuntimeIdentifierInference.targets(351,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [C:\Users\pawel\source\repos\BarcodeRevealTool\src\persistence\BarcodeRevealTool.Persistence.csproj]
+C:\Program Files\dotnet\sdk\10.0.100-rc.2.25502.107\Sdks\Microsoft.NET.Sdk\targets\Microsoft.NET.RuntimeIdentifierInference.targets(351,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [C:\Users\pawel\source\repos\BarcodeRevealTool\src\sc2pulse\Sc2PulseClient.csproj]
+C:\Program Files\dotnet\sdk\10.0.100-rc.2.25502.107\Sdks\Microsoft.NET.Sdk\targets\Microsoft.NET.RuntimeIdentifierInference.targets(351,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [C:\Users\pawel\source\repos\BarcodeRevealTool\src\engine\BarcodeRevealTool.Engine.csproj]
+C:\Program Files\dotnet\sdk\10.0.100-rc.2.25502.107\Sdks\Microsoft.NET.Sdk\targets\Microsoft.NET.RuntimeIdentifierInference.targets(351,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [C:\Users\pawel\source\repos\BarcodeRevealTool\src\console-app\BarcodeRevealTool.ConsoleApp.csproj]
+  Sc2PulseClient -> C:\Users\pawel\source\repos\BarcodeRevealTool\src\sc2pulse\bin\Debug\net8.0\Sc2PulseClient.dll
+  BarcodeRevealTool.Engine -> C:\Users\pawel\source\repos\BarcodeRevealTool\src\engine\bin\Debug\net8.0\BarcodeRevealTool.Engine.dll
+C:\Users\pawel\source\repos\BarcodeRevealTool\src\persistence\Cache\DebugSessionCleanupService.cs(44,29): error CS1061: 'DebugSessionEntity' does not contain a definition for 'DateCompleted' and no accessible extension method 'DateCompleted' accepting a first argument of type 'DebugSessionEntity' could be found (are you missing a using directive or an assembly reference?) [C:\Users\pawel\source\repos\BarcodeRevealTool\src\persistence\BarcodeRevealTool.Persistence.csproj]
+C:\Users\pawel\source\repos\BarcodeRevealTool\src\persistence\Cache\DataTrackingIntegrationService.cs(179,35): error CS1061: 'IUnitOfWork' does not contain a definition for 'DebugSessionEvents' and no accessible extension method 'DebugSessionEvents' accepting a first argument of type 'IUnitOfWork' could be found (are you missing a using directive or an assembly reference?) [C:\Users\pawel\source\repos\BarcodeRevealTool\src\persistence\BarcodeRevealTool.Persistence.csproj]
+
+Build FAILED.
+
+C:\Users\pawel\source\repos\BarcodeRevealTool\src\persistence\Cache\DebugSessionCleanupService.cs(44,29): error CS1061: 'DebugSessionEntity' does not contain a definition for 'DateCompleted' and no accessible extension method 'DateCompleted' accepting a first argument of type 'DebugSessionEntity' could be found (are you missing a using directive or an assembly reference?) [C:\Users\pawel\source\repos\BarcodeRevealTool\src\persistence\BarcodeRevealTool.Persistence.csproj]
+C:\Users\pawel\source\repos\BarcodeRevealTool\src\persistence\Cache\DataTrackingIntegrationService.cs(179,35): error CS1061: 'IUnitOfWork' does not contain a definition for 'DebugSessionEvents' and no accessible extension method 'DebugSessionEvents' accepting a first argument of type 'IUnitOfWork' could be found (are you missing a using directive or an assembly reference?) [C:\Users\pawel\source\repos\BarcodeRevealTool\src\persistence\BarcodeRevealTool.Persistence.csproj]
+    0 Warning(s)
+    2 Error(s)
+
+Time Elapsed 00:00:05.66

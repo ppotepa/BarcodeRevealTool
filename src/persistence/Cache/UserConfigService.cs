@@ -255,53 +255,6 @@ namespace BarcodeRevealTool.Persistence.Cache
         }
 
         /// <summary>
-        /// Get configuration change history for a specific key.
-        /// </summary>
-        public List<ConfigHistoryEntry> GetConfigHistory(string key, int limit = 10)
-        {
-            try
-            {
-                using var connection = CreateConnection();
-                var query = new Query("ConfigHistory")
-                    .Where("ConfigKey", key)
-                    .OrderByDesc("ChangedAt")
-                    .Limit(limit)
-                    .Select("ConfigKey", "OldValue", "NewValue", "ChangedAt", "RunId");
-
-                var compiled = _compiler.Compile(query);
-                using var command = connection.CreateCommand();
-                command.CommandText = compiled.Sql;
-                command.Parameters.Clear();
-                for (int i = 0; i < compiled.Bindings.Count; i++)
-                {
-                    command.Parameters.Add(new SQLiteParameter($"@p{i}", compiled.Bindings[i] ?? DBNull.Value));
-                }
-
-                var result = new List<ConfigHistoryEntry>();
-                using var reader = command.ExecuteReader();
-                while (reader.Read())
-                {
-                    result.Add(new ConfigHistoryEntry
-                    {
-                        ConfigKey = reader["ConfigKey"].ToString() ?? string.Empty,
-                        OldValue = reader["OldValue"] != DBNull.Value ? reader["OldValue"].ToString() : null,
-                        NewValue = reader["NewValue"].ToString() ?? string.Empty,
-                        ChangedAt = DateTime.Parse(reader["ChangedAt"].ToString() ?? DateTime.UtcNow.ToString("O")),
-                        RunId = reader["RunId"] != DBNull.Value ? (int?)Convert.ToInt32(reader["RunId"]) : null
-                    });
-                }
-
-                _logger.Debug("Retrieved {HistoryCount} history entries for {Key}", result.Count, key);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "Failed to get config history for {Key}", key);
-                return new List<ConfigHistoryEntry>();
-            }
-        }
-
-        /// <summary>
         /// Delete all configuration settings (useful for reset).
         /// </summary>
         public bool ClearAllConfigs()
@@ -322,17 +275,5 @@ namespace BarcodeRevealTool.Persistence.Cache
                 return false;
             }
         }
-    }
-
-    /// <summary>
-    /// Represents a single entry in the configuration change history.
-    /// </summary>
-    public class ConfigHistoryEntry
-    {
-        public string ConfigKey { get; set; } = string.Empty;
-        public string? OldValue { get; set; }
-        public string NewValue { get; set; } = string.Empty;
-        public DateTime ChangedAt { get; set; }
-        public int? RunId { get; set; }
     }
 }

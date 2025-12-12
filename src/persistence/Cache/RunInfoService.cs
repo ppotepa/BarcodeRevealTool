@@ -40,7 +40,8 @@ namespace BarcodeRevealTool.Persistence.Cache
         }
 
         /// <summary>
-        /// Gets the next run number by querying the database for the highest existing run number.
+        /// Gets the next run number with daily reset logic.
+        /// Keeps max 2 records per mode (one per day), resets counter if date changes.
         /// Creates a new RunInfo entry and returns the assigned run number.
         /// </summary>
         public int GetNextRunNumber(string mode = "Debug")
@@ -50,24 +51,49 @@ namespace BarcodeRevealTool.Persistence.Cache
                 using var connection = new SQLiteConnection(_connectionString);
                 connection.Open();
 
-                // Get the highest run number
-                int nextRunNumber = 1;
-                var maxQuery = new Query("RunInfo")
-                    .SelectRaw("COALESCE(MAX(RunNumber), 0) + 1");
-                var maxCompiled = _compiler.Compile(maxQuery);
+                var today = DateTime.UtcNow.Date;
 
+                // Get today's records for this mode
+                var getTodayQuery = new Query("RunInfo")
+                    .Where("Mode", mode)
+                    .WhereRaw($"DATE(DateStarted) = DATE('{today:yyyy-MM-dd}')");
+                var getTodayCompiled = _compiler.Compile(getTodayQuery);
+
+                int nextRunNumber = 1;
                 using (var command = connection.CreateCommand())
                 {
-                    command.CommandText = maxCompiled.Sql;
-                    foreach (var binding in maxCompiled.Bindings)
+                    command.CommandText = getTodayCompiled.Sql;
+                    foreach (var binding in getTodayCompiled.Bindings)
                     {
                         command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
                     }
-                    var result = command.ExecuteScalar();
-                    if (result != null && int.TryParse(result.ToString(), out int maxRun))
+
+                    using var reader = command.ExecuteReader();
+                    int maxTodayRun = 0;
+                    while (reader.Read())
                     {
-                        nextRunNumber = maxRun;
+                        int runNum = reader.GetInt32(0);
+                        if (runNum > maxTodayRun)
+                            maxTodayRun = runNum;
                     }
+
+                    nextRunNumber = maxTodayRun + 1;
+                }
+
+                // Clean up old records - keep max 2 per mode (today's records only)
+                var deleteOldQuery = new Query("RunInfo")
+                    .Where("Mode", mode)
+                    .WhereRaw($"DATE(DateStarted) < DATE('{today:yyyy-MM-dd}')");
+                var deleteOldCompiled = _compiler.Compile(deleteOldQuery.AsDelete());
+
+                using (var command = connection.CreateCommand())
+                {
+                    command.CommandText = deleteOldCompiled.Sql;
+                    foreach (var binding in deleteOldCompiled.Bindings)
+                    {
+                        command.Parameters.Add(new SQLiteParameter { Value = binding ?? DBNull.Value });
+                    }
+                    command.ExecuteNonQuery();
                 }
 
                 // Insert new run entry
@@ -75,6 +101,7 @@ namespace BarcodeRevealTool.Persistence.Cache
                 {
                     ["RunNumber"] = nextRunNumber,
                     ["DateStarted"] = DateTime.UtcNow,
+                    ["DateResetAt"] = today,
                     ["Status"] = "InProgress",
                     ["Mode"] = mode
                 });
@@ -90,7 +117,7 @@ namespace BarcodeRevealTool.Persistence.Cache
                     command.ExecuteNonQuery();
                 }
 
-                _logger.Information("Created new run entry with RunNumber: {RunNumber}", nextRunNumber);
+                _logger.Information("Created new run entry with RunNumber: {RunNumber} for mode: {Mode}", nextRunNumber, mode);
                 return nextRunNumber;
             }
             catch (Exception ex)

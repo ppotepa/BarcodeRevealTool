@@ -100,10 +100,22 @@ namespace BarcodeRevealTool.ConsoleApp
 
                 // Initialize data tracking for this run
                 var dataTrackingService = provider.GetRequiredService<DataTrackingIntegrationService>();
-                dataTrackingService.InitializeDebugSession(runNumber);
+                var appSettings = provider.GetRequiredService<AppSettings>();
+
+                // Clean up any InProgress debug sessions from previous runs
+                var debugSessionCleanup = new DebugSessionCleanupService(provider.GetRequiredService<BarcodeRevealTool.Persistence.Repositories.Abstractions.IUnitOfWork>());
+                await debugSessionCleanup.CleanupAsync();
+
+                // Initialize user account if not already present
+                var userAccountInit = new UserAccountInitializationService(
+                    provider.GetRequiredService<BarcodeRevealTool.Persistence.Repositories.Abstractions.IUnitOfWork>(),
+                    provider.GetRequiredService<UserConfigService>());
+                await userAccountInit.InitializeAsync();
+
+                // Initialize debug session with the user's battle tag
+                dataTrackingService.InitializeDebugSession(runNumber, appSettings.User.BattleTag);
 
                 // Update AppSettings in the provider with debug settings if set
-                var appSettings = provider.GetRequiredService<AppSettings>();
                 if (debugSettings.ManualBattleTag != null || debugSettings.ManualNickname != null || debugSettings.LobbyFiles?.Count > 0)
                 {
                     appSettings.Debug = debugSettings;

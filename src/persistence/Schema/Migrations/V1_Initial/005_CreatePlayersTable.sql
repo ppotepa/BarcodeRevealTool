@@ -4,7 +4,9 @@
 
 CREATE TABLE IF NOT EXISTS Players (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    Nickname TEXT,
     BattleTag TEXT NOT NULL UNIQUE,
+    Toon TEXT,
     Name TEXT,
     Race TEXT,
     Rating INTEGER,

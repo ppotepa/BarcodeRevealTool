@@ -19,8 +19,6 @@ namespace BarcodeRevealTool.Persistence.Repositories
         // Debug & Tracking Repositories
         private Repository<DebugSessionEntity>? _debugSessions;
         private Repository<LobbyFileEntity>? _lobbyFiles;
-        private Repository<DebugSessionEventEntity>? _debugSessionEvents;
-        private Repository<ConfigHistoryEntity>? _configHistory;
 
         // Replay & Game Data Repositories
         private ReplayRepository? _replays;
@@ -43,14 +41,6 @@ namespace BarcodeRevealTool.Persistence.Repositories
         /// <summary>Repository for LobbyFile entities (binary lobby file storage).</summary>
         public IRepository<LobbyFileEntity> LobbyFiles =>
             _lobbyFiles ??= new Repository<LobbyFileEntity>(_connectionString, _compiler);
-
-        /// <summary>Repository for DebugSessionEvent entities (event logging).</summary>
-        public IRepository<DebugSessionEventEntity> DebugSessionEvents =>
-            _debugSessionEvents ??= new Repository<DebugSessionEventEntity>(_connectionString, _compiler);
-
-        /// <summary>Repository for ConfigHistory entities (configuration change tracking).</summary>
-        public IRepository<ConfigHistoryEntity> ConfigHistory =>
-            _configHistory ??= new Repository<ConfigHistoryEntity>(_connectionString, _compiler);
 
         // === Replay & Game Data Repositories ===
 

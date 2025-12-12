@@ -63,7 +63,13 @@ namespace BarcodeRevealTool.Persistence.Cache
         /// Record that a lobby was detected and process it for storage.
         /// Call this when GameOrchestrator detects a new lobby.
         /// </summary>
-        public async Task RecordLobbyDetectedAsync(int runNumber, string lobbyFilePath, string? opponentTag = null, string? opponentToon = null)
+        public async Task RecordLobbyDetectedAsync(
+            int runNumber,
+            string lobbyFilePath,
+            string? opponentTag = null,
+            string? opponentToon = null,
+            string? manualOpponentTag = null,
+            string? manualOpponentNickname = null)
         {
             try
             {
@@ -71,15 +77,6 @@ namespace BarcodeRevealTool.Persistence.Cache
                     return;
 
                 var matchIndex = await GetNextMatchIndexAsync(runNumber);
-
-                // Record the event
-                await RecordDebugSessionEventAsync(_currentDebugSessionId.Value, "LobbyDetected", new
-                {
-                    LobbyPath = lobbyFilePath,
-                    OpponentTag = opponentTag,
-                    OpponentToon = opponentToon,
-                    DetectedAt = DateTime.UtcNow.ToString("O")
-                });
 
                 // Store the lobby file using existing service
                 var lobbyFileId = await _lobbyFileService.StoreLobbyFileAsync(
@@ -91,10 +88,21 @@ namespace BarcodeRevealTool.Persistence.Cache
                     debugSessionId: _currentDebugSessionId
                 );
 
-                await RecordDebugSessionEventAsync(_currentDebugSessionId.Value, "LobbyFileStored", new
+                // If manual opponent info is provided, update the debug session with it
+                if (!string.IsNullOrWhiteSpace(manualOpponentTag) || !string.IsNullOrWhiteSpace(manualOpponentNickname))
                 {
-                    LobbyFileId = lobbyFileId,
-                });
+                    var session = await _unitOfWork.DebugSessions.GetByIdAsync(_currentDebugSessionId.Value);
+                    if (session != null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(manualOpponentTag))
+                            session.ManualOpponentBattleTag = manualOpponentTag;
+                        if (!string.IsNullOrWhiteSpace(manualOpponentNickname))
+                            session.ManualOpponentNickname = manualOpponentNickname;
+
+                        session.UpdatedAt = DateTime.UtcNow;
+                        await _unitOfWork.DebugSessions.UpdateAsync(session);
+                    }
+                }
 
                 // Increment lobby counter
                 await IncrementDebugSessionLobbiesAsync(_currentDebugSessionId.Value);
@@ -117,13 +125,6 @@ namespace BarcodeRevealTool.Persistence.Cache
             {
                 if (_currentDebugSessionId == null)
                     return;
-
-                await RecordDebugSessionEventAsync(_currentDebugSessionId.Value, "MatchFinished", new
-                {
-                    ReplayPath = replayFilePath,
-                    OpponentTag = opponentTag,
-                    FinishedAt = DateTime.UtcNow.ToString("O")
-                });
 
                 // Increment match counter
                 await IncrementDebugSessionMatchesAsync(_currentDebugSessionId.Value);
@@ -161,27 +162,6 @@ namespace BarcodeRevealTool.Persistence.Cache
             catch (Exception ex)
             {
                 _logger.Error(ex, "Failed to complete debug session");
-            }
-        }
-
-        private async Task RecordDebugSessionEventAsync(long debugSessionId, string eventType, object? eventDetails = null)
-        {
-            try
-            {
-                var evt = new DebugSessionEventEntity
-                {
-                    DebugSessionId = debugSessionId,
-                    EventType = eventType,
-                    EventDetails = eventDetails != null ? JsonSerializer.Serialize(eventDetails) : null,
-                    OccurredAt = DateTime.UtcNow,
-                };
-
-                await _unitOfWork.DebugSessionEvents.AddAsync(evt);
-                _logger.Debug("Recorded event {EventType} for session {SessionId}", eventType, debugSessionId);
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "Failed to record debug session event {EventType}", eventType);
             }
         }
 

@@ -49,6 +49,9 @@ namespace BarcodeRevealTool.Engine.Extensions
             services.AddSingleton<IOpponentProfileService, OpponentProfileService>();
 
             services.AddSingleton<IReplaySyncService, ReplaySyncService>();
+
+            // IDataTracker will be registered by the persistence layer
+            // GameOrchestrator requires it, so it will be resolved when needed
             services.AddSingleton<GameOrchestrator>();
 
             return services;
